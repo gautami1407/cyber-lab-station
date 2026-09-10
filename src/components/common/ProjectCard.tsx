@@ -1,6 +1,7 @@
 import { ArrowRight, type LucideIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
+import type { AppPath } from "@/lib/navigation";
 import { StatusBadge } from "./StatusBadge";
 import { ProgressBar } from "./ProgressBar";
 
@@ -11,7 +12,7 @@ export interface ProjectSummary {
   concept: string;
   status: "Ready" | "Demo Mode" | "In Progress";
   progress: number;
-  to: string;
+  to: AppPath;
   icon: LucideIcon;
 }
 

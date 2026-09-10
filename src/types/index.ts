@@ -1,16 +1,10 @@
-/**
- * Shared API-ready TypeScript contracts.
- * These mirror the REST payloads the future backend will expose, so screens
- * can switch from mock services to live services without UI changes.
- */
-
 export type OperationState = "idle" | "loading" | "success" | "error";
 
 export type SeverityLevel = "critical" | "high" | "medium" | "low";
 
 export type CheckStatus = "pass" | "warning" | "fail";
 
-/* ---------------------------------- auth ---------------------------------- */
+export type UserRole = "guest" | "user" | "moderator" | "admin";
 
 export interface RegisterRequest {
   username: string;
@@ -29,10 +23,12 @@ export interface AuthResponse {
   userId: string;
   username: string;
   email: string;
+  role: UserRole;
   createdAt: string;
 }
 
 export interface SessionInfo {
+  id: string;
   sessionId: string;
   status: "active" | "expiring" | "expired";
   loginTime: string;
@@ -40,6 +36,7 @@ export interface SessionInfo {
   expiresAt: string;
   device: string;
   ipAddress: string;
+  current: boolean;
 }
 
 export interface PasswordRequirement {
@@ -61,8 +58,6 @@ export interface PasswordStrengthResult {
   requirements: PasswordRequirement[];
 }
 
-/* -------------------------------- scanning -------------------------------- */
-
 export type ScanProfile = "common" | "web" | "custom";
 
 export interface PortScanRequest {
@@ -73,7 +68,7 @@ export interface PortScanRequest {
   authorized: boolean;
 }
 
-export type PortStatus = "open" | "closed" | "filtered" | "error";
+export type PortStatus = "open" | "closed" | "filtered" | "timeout" | "error";
 
 export interface PortResult {
   port: number;
@@ -91,7 +86,7 @@ export interface PortScanResponse {
   closed: number;
   errors: number;
   durationMs: number;
-  demo: boolean;
+  lab: boolean;
 }
 
 export type DiscoveryMethod = "ping" | "tcp" | "arp";
@@ -121,10 +116,8 @@ export interface IpRangeScanResponse {
   inactive: number;
   errors: number;
   durationMs: number;
-  demo: boolean;
+  lab: boolean;
 }
-
-/* --------------------------------- domains -------------------------------- */
 
 export type SubdomainSource =
   | "DNS"
@@ -153,10 +146,8 @@ export interface SubdomainResponse {
   inactive: number;
   sources: number;
   durationMs: number;
-  demo: boolean;
+  lab: boolean;
 }
-
-/* ---------------------------- application security ------------------------- */
 
 export interface ValidationRequest {
   value: string;
@@ -190,8 +181,6 @@ export interface Recommendation {
   description: string;
 }
 
-/* --------------------------------- activity -------------------------------- */
-
 export interface ActivityEntry {
   id: string;
   time: string;
@@ -200,4 +189,27 @@ export interface ActivityEntry {
   target: string;
   status: "success" | "failed" | "stopped" | "running";
   durationMs: number;
+}
+
+export interface OperationHandle {
+  operationId: string;
+}
+
+export interface OperationSnapshot<T> {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  progressDone: number;
+  progressTotal: number;
+  result: T | null;
+  error: string | null;
+  durationMs: number | null;
+}
+
+export interface HealthStatus {
+  status: string;
+  api: boolean;
+  database: boolean;
+  labMode: boolean;
+  apiVersion: string;
+  environment: string;
 }

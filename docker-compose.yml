@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cyberlab
+      POSTGRES_PASSWORD: cyberlab
+      POSTGRES_DB: cyberlab
+    ports:
+      - "5432:5432"
+    volumes:
+      - cyberlab_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cyberlab -d cyberlab"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://cyberlab:cyberlab@postgres:5432/cyberlab
+      SESSION_SECRET: docker-dev-change-me
+      PORT: 4000
+      FRONTEND_URL: http://localhost:8080
+      NODE_ENV: development
+      ALLOWED_SCAN_TARGETS: 127.0.0.1,localhost
+      ALLOWED_ENUMERATION_DOMAINS: localhost
+    ports:
+      - "4000:4000"
+    command: sh -c "npx prisma migrate deploy && npx tsx src/index.ts"
+
+volumes:
+  cyberlab_pg:

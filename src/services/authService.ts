@@ -1,5 +1,4 @@
-import { delay } from "./apiClient";
-import { mockSession } from "@/data/mock";
+import { request } from "./apiClient";
 import type {
   AuthResponse,
   LoginRequest,
@@ -7,17 +6,6 @@ import type {
   RegisterRequest,
   SessionInfo,
 } from "@/types";
-
-/**
- * authService — future endpoints:
- *   POST /api/auth/register
- *   POST /api/auth/login
- *   POST /api/auth/logout
- *   GET  /api/auth/session
- *
- * No credential handling, hashing or persistence happens in the frontend.
- * Passwords are never logged, stored or echoed.
- */
 
 export function evaluatePasswordStrength(password: string): PasswordStrengthResult {
   const requirements = [
@@ -27,62 +15,38 @@ export function evaluatePasswordStrength(password: string): PasswordStrengthResu
     { id: "number", label: "One number (0–9)", met: /[0-9]/.test(password) },
     { id: "special", label: "One special character (!@#$…)", met: /[^A-Za-z0-9]/.test(password) },
   ];
-
   const met = requirements.filter((r) => r.met).length;
   const score = (password.length === 0 ? 0 : Math.max(0, met - 1)) as 0 | 1 | 2 | 3 | 4;
   const labels = ["Very Weak", "Weak", "Medium", "Strong", "Very Strong"] as const;
-
-  return { score, label: labels[score], requirements };
+  return { score, label: labels[score] ?? "Very Weak", requirements };
 }
 
 export const authService = {
-  async register(payload: RegisterRequest): Promise<AuthResponse> {
-    await delay(900);
-    if (payload.password !== payload.confirmPassword) {
-      throw new Error("Passwords do not match.");
-    }
-    return {
-      userId: "usr_demo_0001",
-      username: payload.username,
-      email: payload.email,
-      createdAt: new Date().toISOString(),
-    };
+  register(payload: RegisterRequest) {
+    return request<AuthResponse>("/auth/register", { method: "POST", body: payload });
   },
-
-  async login(payload: LoginRequest): Promise<AuthResponse> {
-    await delay(900);
-    if (!payload.identifier || !payload.password) {
-      throw new Error("Invalid credentials. Please check your details and try again.");
-    }
-    return {
-      userId: "usr_demo_0001",
-      username: payload.identifier,
-      email: "analyst@cyberlab.demo",
-      createdAt: new Date().toISOString(),
-    };
+  login(payload: LoginRequest) {
+    return request<AuthResponse>("/auth/login", { method: "POST", body: payload });
   },
-
-  async getSession(): Promise<SessionInfo> {
-    await delay(500);
-    return mockSession;
+  logout() {
+    return request<void>("/auth/logout", { method: "POST" });
   },
-
-  async refreshSession(): Promise<SessionInfo> {
-    await delay(700);
-    const now = new Date();
-    return {
-      ...mockSession,
-      lastActivity: now.toISOString(),
-      expiresAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
-      status: "active",
-    };
+  getMe() {
+    return request<{ user: AuthResponse; session: SessionInfo }>("/auth/session");
   },
-
-  async logout(): Promise<void> {
-    await delay(500);
+  getSession() {
+    return request<{ user: AuthResponse; session: SessionInfo }>("/auth/session").then((row) => row.session);
   },
-
-  async logoutAll(): Promise<void> {
-    await delay(700);
+  listSessions() {
+    return request<SessionInfo[]>("/auth/sessions");
+  },
+  refreshSession() {
+    return request<SessionInfo>("/auth/session/refresh", { method: "POST" });
+  },
+  revokeSession(id: string) {
+    return request<void>(`/auth/sessions/${id}`, { method: "DELETE" });
+  },
+  logoutAll() {
+    return request<void>("/auth/logout-all", { method: "POST" });
   },
 };

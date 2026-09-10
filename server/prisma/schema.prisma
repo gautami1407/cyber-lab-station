@@ -1,0 +1,115 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  guest
+  user
+  moderator
+  admin
+}
+
+enum OperationType {
+  PORT_SCAN
+  IP_SCAN
+  SUBDOMAIN
+}
+
+enum OperationStatus {
+  queued
+  running
+  completed
+  failed
+  cancelled
+}
+
+model User {
+  id               String    @id @default(cuid())
+  username         String    @unique
+  email            String    @unique
+  passwordHash     String
+  role             Role      @default(user)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  sessions         Session[]
+  operations       SecurityOperation[]
+  auditLogs        AuditLog[]
+
+  @@index([email])
+  @@index([username])
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  publicId       String    @unique @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now())
+  lastActivityAt DateTime  @default(now())
+  expiresAt      DateTime
+  absoluteExpiry DateTime
+  revokedAt      DateTime?
+  userAgent      String
+  ipHash         String
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model LoginAttempt {
+  id             String   @id @default(cuid())
+  identifierHash String
+  ipHash         String
+  success        Boolean
+  createdAt      DateTime @default(now())
+
+  @@index([ipHash, createdAt])
+  @@index([identifierHash, createdAt])
+}
+
+model SecurityOperation {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          OperationType
+  project       String
+  operation     String
+  targetMasked  String
+  targetHash    String
+  status        OperationStatus @default(queued)
+  progressDone  Int             @default(0)
+  progressTotal Int             @default(0)
+  resultJson    Json?
+  errorCode     String?
+  errorMessage  String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  durationMs    Int?
+  createdAt     DateTime        @default(now())
+  cancelRequested Boolean       @default(false)
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action       String
+  targetMasked String?
+  success      Boolean
+  ipHash       String?
+  createdAt    DateTime @default(now())
+  metadata     Json?
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+}

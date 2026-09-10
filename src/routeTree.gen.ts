@@ -10,33 +10,157 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppRouteImport } from './routes/_app'
+import { Route as AppActivityRouteImport } from './routes/_app/activity'
+import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
+import { Route as AppDocumentationRouteImport } from './routes/_app/documentation'
+import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppProjectsApplicationSecurityRouteImport } from './routes/_app/projects/application-security'
+import { Route as AppProjectsAuthenticationRouteImport } from './routes/_app/projects/authentication'
+import { Route as AppProjectsIpRangeScannerRouteImport } from './routes/_app/projects/ip-range-scanner'
+import { Route as AppProjectsPortScannerRouteImport } from './routes/_app/projects/port-scanner'
+import { Route as AppProjectsSubdomainEnumerationRouteImport } from './routes/_app/projects/subdomain-enumeration'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppActivityRoute = AppActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDashboardRoute = AppDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDocumentationRoute = AppDocumentationRouteImport.update({
+  id: '/documentation',
+  path: '/documentation',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppProjectsApplicationSecurityRoute =
+  AppProjectsApplicationSecurityRouteImport.update({
+    id: '/projects/application-security',
+    path: '/projects/application-security',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppProjectsAuthenticationRoute =
+  AppProjectsAuthenticationRouteImport.update({
+    id: '/projects/authentication',
+    path: '/projects/authentication',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppProjectsIpRangeScannerRoute =
+  AppProjectsIpRangeScannerRouteImport.update({
+    id: '/projects/ip-range-scanner',
+    path: '/projects/ip-range-scanner',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppProjectsPortScannerRoute = AppProjectsPortScannerRouteImport.update({
+  id: '/projects/port-scanner',
+  path: '/projects/port-scanner',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppProjectsSubdomainEnumerationRoute =
+  AppProjectsSubdomainEnumerationRouteImport.update({
+    id: '/projects/subdomain-enumeration',
+    path: '/projects/subdomain-enumeration',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/activity': typeof AppActivityRoute
+  '/dashboard': typeof AppDashboardRoute
+  '/documentation': typeof AppDocumentationRoute
+  '/settings': typeof AppSettingsRoute
+  '/projects/application-security': typeof AppProjectsApplicationSecurityRoute
+  '/projects/authentication': typeof AppProjectsAuthenticationRoute
+  '/projects/ip-range-scanner': typeof AppProjectsIpRangeScannerRoute
+  '/projects/port-scanner': typeof AppProjectsPortScannerRoute
+  '/projects/subdomain-enumeration': typeof AppProjectsSubdomainEnumerationRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/activity': typeof AppActivityRoute
+  '/dashboard': typeof AppDashboardRoute
+  '/documentation': typeof AppDocumentationRoute
+  '/settings': typeof AppSettingsRoute
+  '/projects/application-security': typeof AppProjectsApplicationSecurityRoute
+  '/projects/authentication': typeof AppProjectsAuthenticationRoute
+  '/projects/ip-range-scanner': typeof AppProjectsIpRangeScannerRoute
+  '/projects/port-scanner': typeof AppProjectsPortScannerRoute
+  '/projects/subdomain-enumeration': typeof AppProjectsSubdomainEnumerationRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_app': typeof AppRouteWithChildren
+  '/_app/activity': typeof AppActivityRoute
+  '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/documentation': typeof AppDocumentationRoute
+  '/_app/settings': typeof AppSettingsRoute
+  '/_app/projects/application-security': typeof AppProjectsApplicationSecurityRoute
+  '/_app/projects/authentication': typeof AppProjectsAuthenticationRoute
+  '/_app/projects/ip-range-scanner': typeof AppProjectsIpRangeScannerRoute
+  '/_app/projects/port-scanner': typeof AppProjectsPortScannerRoute
+  '/_app/projects/subdomain-enumeration': typeof AppProjectsSubdomainEnumerationRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/activity'
+    | '/dashboard'
+    | '/documentation'
+    | '/settings'
+    | '/projects/application-security'
+    | '/projects/authentication'
+    | '/projects/ip-range-scanner'
+    | '/projects/port-scanner'
+    | '/projects/subdomain-enumeration'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/activity'
+    | '/dashboard'
+    | '/documentation'
+    | '/settings'
+    | '/projects/application-security'
+    | '/projects/authentication'
+    | '/projects/ip-range-scanner'
+    | '/projects/port-scanner'
+    | '/projects/subdomain-enumeration'
+  id:
+    | '__root__'
+    | '/'
+    | '/_app'
+    | '/_app/activity'
+    | '/_app/dashboard'
+    | '/_app/documentation'
+    | '/_app/settings'
+    | '/_app/projects/application-security'
+    | '/_app/projects/authentication'
+    | '/_app/projects/ip-range-scanner'
+    | '/_app/projects/port-scanner'
+    | '/_app/projects/subdomain-enumeration'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +172,108 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_app/activity': {
+      id: '/_app/activity'
+      path: '/activity'
+      fullPath: '/activity'
+      preLoaderRoute: typeof AppActivityRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/dashboard': {
+      id: '/_app/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AppDashboardRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/documentation': {
+      id: '/_app/documentation'
+      path: '/documentation'
+      fullPath: '/documentation'
+      preLoaderRoute: typeof AppDocumentationRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/projects/application-security': {
+      id: '/_app/projects/application-security'
+      path: '/projects/application-security'
+      fullPath: '/projects/application-security'
+      preLoaderRoute: typeof AppProjectsApplicationSecurityRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/projects/authentication': {
+      id: '/_app/projects/authentication'
+      path: '/projects/authentication'
+      fullPath: '/projects/authentication'
+      preLoaderRoute: typeof AppProjectsAuthenticationRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/projects/ip-range-scanner': {
+      id: '/_app/projects/ip-range-scanner'
+      path: '/projects/ip-range-scanner'
+      fullPath: '/projects/ip-range-scanner'
+      preLoaderRoute: typeof AppProjectsIpRangeScannerRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/projects/port-scanner': {
+      id: '/_app/projects/port-scanner'
+      path: '/projects/port-scanner'
+      fullPath: '/projects/port-scanner'
+      preLoaderRoute: typeof AppProjectsPortScannerRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/projects/subdomain-enumeration': {
+      id: '/_app/projects/subdomain-enumeration'
+      path: '/projects/subdomain-enumeration'
+      fullPath: '/projects/subdomain-enumeration'
+      preLoaderRoute: typeof AppProjectsSubdomainEnumerationRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
+interface AppRouteChildren {
+  AppActivityRoute: typeof AppActivityRoute
+  AppDashboardRoute: typeof AppDashboardRoute
+  AppDocumentationRoute: typeof AppDocumentationRoute
+  AppSettingsRoute: typeof AppSettingsRoute
+  AppProjectsApplicationSecurityRoute: typeof AppProjectsApplicationSecurityRoute
+  AppProjectsAuthenticationRoute: typeof AppProjectsAuthenticationRoute
+  AppProjectsIpRangeScannerRoute: typeof AppProjectsIpRangeScannerRoute
+  AppProjectsPortScannerRoute: typeof AppProjectsPortScannerRoute
+  AppProjectsSubdomainEnumerationRoute: typeof AppProjectsSubdomainEnumerationRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppActivityRoute: AppActivityRoute,
+  AppDashboardRoute: AppDashboardRoute,
+  AppDocumentationRoute: AppDocumentationRoute,
+  AppSettingsRoute: AppSettingsRoute,
+  AppProjectsApplicationSecurityRoute: AppProjectsApplicationSecurityRoute,
+  AppProjectsAuthenticationRoute: AppProjectsAuthenticationRoute,
+  AppProjectsIpRangeScannerRoute: AppProjectsIpRangeScannerRoute,
+  AppProjectsPortScannerRoute: AppProjectsPortScannerRoute,
+  AppProjectsSubdomainEnumerationRoute: AppProjectsSubdomainEnumerationRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

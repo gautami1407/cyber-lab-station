@@ -1,90 +1,70 @@
-import { delay } from "./apiClient";
-import { appSecurityChecks, mockActivity, recommendations } from "@/data/mock";
+import { request } from "./apiClient";
 import type {
   ActivityEntry,
+  HealthStatus,
   Recommendation,
   SecurityCheck,
-  ValidationCheck,
   ValidationResponse,
 } from "@/types";
 
-/**
- * securityService — future endpoints:
- *   POST /api/security/validate
- *   GET  /api/activity
- */
-
-const UNSAFE_PATTERN = /(<script|javascript:|onerror=|--|;\s*drop\s|union\s+select|\{\{)/i;
-
 export const securityService = {
-  /** Client-side illustration only; the backend must re-validate everything. */
-  validateInput(value: string): ValidationResponse {
-    const trimmed = value.trim();
-    const checks: ValidationCheck[] = [
-      {
-        id: "required",
-        label: "Required field",
-        status: trimmed.length > 0 ? "pass" : "fail",
-        detail: trimmed.length > 0 ? "Value is present." : "A value is required.",
-      },
-      {
-        id: "length",
-        label: "Length validation (3–120)",
-        status: trimmed.length >= 3 && trimmed.length <= 120 ? "pass" : "fail",
-        detail: `${trimmed.length} characters supplied.`,
-      },
-      {
-        id: "email",
-        label: "Email format",
-        status: /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(trimmed) ? "pass" : "warning",
-        detail: "Only enforced when the field expects an email address.",
-      },
-      {
-        id: "numeric",
-        label: "Numeric format",
-        status: /^-?\d+(\.\d+)?$/.test(trimmed) ? "pass" : "warning",
-        detail: "Only enforced when the field expects a number.",
-      },
-      {
-        id: "charset",
-        label: "Allowed characters",
-        status: /^[\w\s@.\-+']*$/.test(trimmed) ? "pass" : "fail",
-        detail: "Letters, digits, spaces and . - _ @ + ' are permitted.",
-      },
-      {
-        id: "sanitization",
-        label: "Sanitization",
-        status: UNSAFE_PATTERN.test(trimmed) ? "fail" : "pass",
-        detail: UNSAFE_PATTERN.test(trimmed)
-          ? "Potentially dangerous pattern detected and neutralised."
-          : "No injection-style pattern detected.",
-      },
-    ];
-
-    const sanitized = trimmed
-      .replace(/[<>]/g, "")
-      .replace(/javascript:/gi, "")
-      .slice(0, 120);
-
-    return {
-      safe: checks.every((c) => c.status !== "fail"),
-      sanitized,
-      checks,
-    };
+  validateInput(value: string) {
+    return request<ValidationResponse>("/security/validate-input", {
+      method: "POST",
+      body: { value },
+    });
   },
-
-  async getChecks(): Promise<SecurityCheck[]> {
-    await delay(300);
-    return appSecurityChecks;
+  getChecks() {
+    return request<SecurityCheck[]>("/security/checks");
   },
-
-  async getRecommendations(): Promise<Recommendation[]> {
-    await delay(300);
-    return recommendations;
+  getRecommendations() {
+    return request<Recommendation[]>("/security/recommendations");
   },
-
-  async getActivity(): Promise<ActivityEntry[]> {
-    await delay(400);
-    return mockActivity;
+  getActivity(params: Record<string, string | number> = {}) {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== "" && value !== "all") search.set(key, String(value));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return request<{ total: number; page: number; rows: ActivityEntry[] }>(`/activity${suffix}`);
+  },
+  getDashboard() {
+    return request<{
+      projects: number;
+      securityControls: number;
+      recentOperations: number;
+      successful: number;
+      failed: number;
+      database: boolean;
+      recent: Array<{
+        id: string;
+        time: string;
+        project: string;
+        operation: string;
+        target: string;
+        status: string;
+        durationMs: number;
+      }>;
+    }>("/dashboard");
+  },
+  getHealth() {
+    return request<HealthStatus>("/health");
+  },
+  getPublicSettings() {
+    return request<{
+      apiVersion: string;
+      environment: string;
+      labMode: boolean;
+      sessionIdleMinutes: number;
+      sessionAbsoluteHours: number;
+      allowedTargetCount: number;
+      allowedDomainCount: number;
+    }>("/settings/public");
+  },
+  getRbac() {
+    return request<{
+      role: "guest" | "user" | "moderator" | "admin";
+      matrix: Record<string, Record<string, boolean>>;
+    }>("/security/rbac");
   },
 };

@@ -1,66 +1,31 @@
-import { delay } from "./apiClient";
-import { mockHostResults, mockPortResults } from "@/data/mock";
+import { request } from "./apiClient";
 import type {
   IpRangeScanRequest,
-  IpRangeScanResponse,
+  OperationHandle,
+  OperationSnapshot,
   PortScanRequest,
   PortScanResponse,
+  IpRangeScanResponse,
 } from "@/types";
 
-/**
- * scannerService / ipScannerService — future endpoints:
- *   POST /api/scanner/ports
- *   POST /api/scanner/ip-range
- *
- * DEMO MODE: results are simulated locally. No sockets are opened and no
- * network request leaves the browser.
- */
-
 export const scannerService = {
-  async scanPorts(payload: PortScanRequest): Promise<PortScanResponse> {
-    if (!payload.authorized) {
-      throw new Error("Authorization confirmation is required before scanning.");
-    }
-    await delay(600);
-
-    const results =
-      payload.profile === "web"
-        ? mockPortResults.filter((r) => [80, 443, 8080].includes(r.port))
-        : payload.profile === "custom"
-          ? mockPortResults.filter(
-              (r) => r.port >= payload.startPort && r.port <= payload.endPort,
-            )
-          : mockPortResults;
-
-    return {
-      target: payload.target,
-      results,
-      totalScanned: results.length,
-      open: results.filter((r) => r.status === "open").length,
-      closed: results.filter((r) => r.status === "closed").length,
-      errors: results.filter((r) => r.status === "error").length,
-      durationMs: 4200,
-      demo: true,
-    };
+  scanPorts(payload: PortScanRequest) {
+    return request<OperationHandle>("/scanner/ports", { method: "POST", body: payload });
   },
 };
 
 export const ipScannerService = {
-  async scanRange(payload: IpRangeScanRequest): Promise<IpRangeScanResponse> {
-    if (!payload.authorized) {
-      throw new Error("Authorization confirmation is required before scanning.");
-    }
-    await delay(600);
-
-    const results = mockHostResults.map((h) => ({ ...h, method: payload.method }));
-    return {
-      results,
-      checked: results.length,
-      active: results.filter((r) => r.status === "active").length,
-      inactive: results.filter((r) => r.status === "inactive").length,
-      errors: results.filter((r) => r.status === "error").length,
-      durationMs: 5100,
-      demo: true,
-    };
+  scanRange(payload: IpRangeScanRequest) {
+    return request<OperationHandle>("/scanner/ip-range", { method: "POST", body: payload });
   },
 };
+
+export function getOperation<T>(id: string) {
+  return request<OperationSnapshot<T>>(`/operations/${id}`);
+}
+
+export function cancelOperation(id: string) {
+  return request<{ cancelled: boolean }>(`/operations/${id}/cancel`, { method: "POST" });
+}
+
+export type { PortScanResponse, IpRangeScanResponse };

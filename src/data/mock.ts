@@ -53,6 +53,7 @@ export const mockSubdomains: SubdomainResult[] = [
 ];
 
 export const mockSession: SessionInfo = {
+  id: "pub_demo",
   sessionId: "sess_9f2c••••••••••4d1a",
   status: "active",
   loginTime: "2026-09-10T08:42:00Z",
@@ -60,7 +61,34 @@ export const mockSession: SessionInfo = {
   expiresAt: "2026-09-10T10:42:00Z",
   device: "Chrome 128 · macOS",
   ipAddress: "192.168.1.•••",
+  current: true,
 };
+
+export const mockSessions: SessionInfo[] = [
+  mockSession,
+  {
+    id: "pub_demo_2",
+    sessionId: "sess_3ab1••••••••••7c02",
+    status: "active",
+    loginTime: "2026-09-09T16:10:00Z",
+    lastActivity: "2026-09-10T07:22:00Z",
+    expiresAt: "2026-09-10T12:10:00Z",
+    device: "Firefox 131 · Windows",
+    ipAddress: "10.0.0.•••",
+    current: false,
+  },
+  {
+    id: "pub_demo_3",
+    sessionId: "sess_88e0••••••••••1f44",
+    status: "expiring",
+    loginTime: "2026-09-08T11:05:00Z",
+    lastActivity: "2026-09-10T04:40:00Z",
+    expiresAt: "2026-09-10T11:05:00Z",
+    device: "Safari 18 · iPhone",
+    ipAddress: "172.16.4.•••",
+    current: false,
+  },
+];
 
 export const authSecurityControls: SecurityCheck[] = [
   { id: "hash", title: "Password hashing", status: "pass", description: "Backend will store Argon2id hashes with per-user salts. Plaintext never leaves the request scope." },
