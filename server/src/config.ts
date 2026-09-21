@@ -38,7 +38,9 @@ export const config = {
   maxHostsPerScan: num("MAX_HOSTS_PER_SCAN", 256),
   scanTimeoutMs: num("SCAN_TIMEOUT_MS", 1000),
   scanConcurrency: num("SCAN_CONCURRENCY", 20),
-  probePorts: csv("PROBE_PORTS").map(Number).filter((n) => n > 0 && n <= 65535),
+  probePorts: csv("PROBE_PORTS").map(Number).filter((n) => n > 0 && n <= 65535).length
+    ? csv("PROBE_PORTS").map(Number).filter((n) => n > 0 && n <= 65535)
+    : [22, 80, 443],
   sessionIdleMinutes: num("SESSION_IDLE_MINUTES", 30),
   sessionAbsoluteHours: num("SESSION_ABSOLUTE_HOURS", 12),
   loginMaxAttempts: num("LOGIN_MAX_ATTEMPTS", 10),
@@ -46,6 +48,11 @@ export const config = {
   authRateLimit: num("AUTH_RATE_LIMIT", 5),
   scannerRateLimit: num("SCANNER_RATE_LIMIT", 10),
   enumerationRateLimit: num("ENUMERATION_RATE_LIMIT", 10),
+  agentHeartbeatIntervalMs: num("AGENT_HEARTBEAT_INTERVAL_MS", 10_000),
+  agentHeartbeatTimeoutMs: num("AGENT_HEARTBEAT_TIMEOUT_MS", 30_000),
+  screenCaptureMaxBytes: num("SCREEN_CAPTURE_MAX_BYTES", 2 * 1024 * 1024),
+  screenCaptureChunkBytes: num("SCREEN_CAPTURE_CHUNK_BYTES", 8 * 1024),
+  screenCaptureTimeoutMs: num("SCREEN_CAPTURE_TIMEOUT_MS", 15_000),
   cookieName: "cyberlab.sid",
   apiVersion: "v1",
 };

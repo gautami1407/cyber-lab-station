@@ -1,6 +1,9 @@
 import { createApp } from "./app.js";
 import { config } from "./config.js";
 import { prisma } from "./prisma.js";
+import { monitorShutdown } from "./services/monitoring.js";
+import { createServer } from "node:http";
+import { attachRealtime, closeRealtime } from "./realtime.js";
 
 const app = createApp();
 
@@ -16,7 +19,9 @@ async function verifyDatabaseConnection() {
   }
 }
 
-const server = app.listen(config.port, async () => {
+const server = createServer(app);
+attachRealtime(server);
+server.listen(config.port, async () => {
   console.log("CyberLab API starting...");
   await verifyDatabaseConnection();
   console.log(`Server listening on http://localhost:${config.port}`);
@@ -24,6 +29,8 @@ const server = app.listen(config.port, async () => {
 
 async function shutdown() {
   server.close();
+  closeRealtime();
+  await monitorShutdown();
   await prisma.$disconnect();
   process.exit(0);
 }

@@ -14,7 +14,12 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppActivityRouteImport } from './routes/_app/activity'
 import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppDocumentationRouteImport } from './routes/_app/documentation'
+import { Route as AppMonitoringRouteImport } from './routes/_app/monitoring'
+import { Route as AppNetworksRouteImport } from './routes/_app/networks'
+import { Route as AppRemoteDevicesRouteImport } from './routes/_app/remote-devices'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppTopologyRouteImport } from './routes/_app/topology'
+import { Route as AppDevicesIdRouteImport } from './routes/_app/devices/$id'
 import { Route as AppProjectsApplicationSecurityRouteImport } from './routes/_app/projects/application-security'
 import { Route as AppProjectsAuthenticationRouteImport } from './routes/_app/projects/authentication'
 import { Route as AppProjectsIpRangeScannerRouteImport } from './routes/_app/projects/ip-range-scanner'
@@ -45,9 +50,34 @@ const AppDocumentationRoute = AppDocumentationRouteImport.update({
   path: '/documentation',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMonitoringRoute = AppMonitoringRouteImport.update({
+  id: '/monitoring',
+  path: '/monitoring',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppNetworksRoute = AppNetworksRouteImport.update({
+  id: '/networks',
+  path: '/networks',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppRemoteDevicesRoute = AppRemoteDevicesRouteImport.update({
+  id: '/remote-devices',
+  path: '/remote-devices',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTopologyRoute = AppTopologyRouteImport.update({
+  id: '/topology',
+  path: '/topology',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDevicesIdRoute = AppDevicesIdRouteImport.update({
+  id: '/devices/$id',
+  path: '/devices/$id',
   getParentRoute: () => AppRoute,
 } as any)
 const AppProjectsApplicationSecurityRoute =
@@ -85,7 +115,12 @@ export interface FileRoutesByFullPath {
   '/activity': typeof AppActivityRoute
   '/dashboard': typeof AppDashboardRoute
   '/documentation': typeof AppDocumentationRoute
+  '/monitoring': typeof AppMonitoringRoute
+  '/networks': typeof AppNetworksRoute
+  '/remote-devices': typeof AppRemoteDevicesRoute
   '/settings': typeof AppSettingsRoute
+  '/topology': typeof AppTopologyRoute
+  '/devices/$id': typeof AppDevicesIdRoute
   '/projects/application-security': typeof AppProjectsApplicationSecurityRoute
   '/projects/authentication': typeof AppProjectsAuthenticationRoute
   '/projects/ip-range-scanner': typeof AppProjectsIpRangeScannerRoute
@@ -97,7 +132,12 @@ export interface FileRoutesByTo {
   '/activity': typeof AppActivityRoute
   '/dashboard': typeof AppDashboardRoute
   '/documentation': typeof AppDocumentationRoute
+  '/monitoring': typeof AppMonitoringRoute
+  '/networks': typeof AppNetworksRoute
+  '/remote-devices': typeof AppRemoteDevicesRoute
   '/settings': typeof AppSettingsRoute
+  '/topology': typeof AppTopologyRoute
+  '/devices/$id': typeof AppDevicesIdRoute
   '/projects/application-security': typeof AppProjectsApplicationSecurityRoute
   '/projects/authentication': typeof AppProjectsAuthenticationRoute
   '/projects/ip-range-scanner': typeof AppProjectsIpRangeScannerRoute
@@ -111,7 +151,12 @@ export interface FileRoutesById {
   '/_app/activity': typeof AppActivityRoute
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/documentation': typeof AppDocumentationRoute
+  '/_app/monitoring': typeof AppMonitoringRoute
+  '/_app/networks': typeof AppNetworksRoute
+  '/_app/remote-devices': typeof AppRemoteDevicesRoute
   '/_app/settings': typeof AppSettingsRoute
+  '/_app/topology': typeof AppTopologyRoute
+  '/_app/devices/$id': typeof AppDevicesIdRoute
   '/_app/projects/application-security': typeof AppProjectsApplicationSecurityRoute
   '/_app/projects/authentication': typeof AppProjectsAuthenticationRoute
   '/_app/projects/ip-range-scanner': typeof AppProjectsIpRangeScannerRoute
@@ -125,7 +170,12 @@ export interface FileRouteTypes {
     | '/activity'
     | '/dashboard'
     | '/documentation'
+    | '/monitoring'
+    | '/networks'
+    | '/remote-devices'
     | '/settings'
+    | '/topology'
+    | '/devices/$id'
     | '/projects/application-security'
     | '/projects/authentication'
     | '/projects/ip-range-scanner'
@@ -137,7 +187,12 @@ export interface FileRouteTypes {
     | '/activity'
     | '/dashboard'
     | '/documentation'
+    | '/monitoring'
+    | '/networks'
+    | '/remote-devices'
     | '/settings'
+    | '/topology'
+    | '/devices/$id'
     | '/projects/application-security'
     | '/projects/authentication'
     | '/projects/ip-range-scanner'
@@ -150,7 +205,12 @@ export interface FileRouteTypes {
     | '/_app/activity'
     | '/_app/dashboard'
     | '/_app/documentation'
+    | '/_app/monitoring'
+    | '/_app/networks'
+    | '/_app/remote-devices'
     | '/_app/settings'
+    | '/_app/topology'
+    | '/_app/devices/$id'
     | '/_app/projects/application-security'
     | '/_app/projects/authentication'
     | '/_app/projects/ip-range-scanner'
@@ -200,11 +260,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDocumentationRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/monitoring': {
+      id: '/_app/monitoring'
+      path: '/monitoring'
+      fullPath: '/monitoring'
+      preLoaderRoute: typeof AppMonitoringRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/networks': {
+      id: '/_app/networks'
+      path: '/networks'
+      fullPath: '/networks'
+      preLoaderRoute: typeof AppNetworksRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/remote-devices': {
+      id: '/_app/remote-devices'
+      path: '/remote-devices'
+      fullPath: '/remote-devices'
+      preLoaderRoute: typeof AppRemoteDevicesRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings': {
       id: '/_app/settings'
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/topology': {
+      id: '/_app/topology'
+      path: '/topology'
+      fullPath: '/topology'
+      preLoaderRoute: typeof AppTopologyRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/devices/$id': {
+      id: '/_app/devices/$id'
+      path: '/devices/$id'
+      fullPath: '/devices/$id'
+      preLoaderRoute: typeof AppDevicesIdRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/projects/application-security': {
@@ -249,7 +344,12 @@ interface AppRouteChildren {
   AppActivityRoute: typeof AppActivityRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppDocumentationRoute: typeof AppDocumentationRoute
+  AppMonitoringRoute: typeof AppMonitoringRoute
+  AppNetworksRoute: typeof AppNetworksRoute
+  AppRemoteDevicesRoute: typeof AppRemoteDevicesRoute
   AppSettingsRoute: typeof AppSettingsRoute
+  AppTopologyRoute: typeof AppTopologyRoute
+  AppDevicesIdRoute: typeof AppDevicesIdRoute
   AppProjectsApplicationSecurityRoute: typeof AppProjectsApplicationSecurityRoute
   AppProjectsAuthenticationRoute: typeof AppProjectsAuthenticationRoute
   AppProjectsIpRangeScannerRoute: typeof AppProjectsIpRangeScannerRoute
@@ -261,7 +361,12 @@ const AppRouteChildren: AppRouteChildren = {
   AppActivityRoute: AppActivityRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppDocumentationRoute: AppDocumentationRoute,
+  AppMonitoringRoute: AppMonitoringRoute,
+  AppNetworksRoute: AppNetworksRoute,
+  AppRemoteDevicesRoute: AppRemoteDevicesRoute,
   AppSettingsRoute: AppSettingsRoute,
+  AppTopologyRoute: AppTopologyRoute,
+  AppDevicesIdRoute: AppDevicesIdRoute,
   AppProjectsApplicationSecurityRoute: AppProjectsApplicationSecurityRoute,
   AppProjectsAuthenticationRoute: AppProjectsAuthenticationRoute,
   AppProjectsIpRangeScannerRoute: AppProjectsIpRangeScannerRoute,

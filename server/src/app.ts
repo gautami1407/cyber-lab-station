@@ -12,6 +12,10 @@ import { prisma } from "./prisma.js";
 import authRoutes from "./routes/auth.js";
 import opsRoutes from "./routes/ops.js";
 import securityRoutes from "./routes/security.js";
+import networkRoutes from "./routes/network.js";
+import diagnosticsRoutes from "./routes/diagnostics.js";
+import monitoringRoutes from "./routes/monitoring.js";
+import pairingRoutes from "./routes/pairing.js";
 
 async function checkDatabaseConnection() {
   if (!config.databaseUrl) return false;
@@ -98,6 +102,10 @@ export function createApp() {
   app.use("/api/auth", authRoutes);
   app.use("/api", opsRoutes);
   app.use("/api", securityRoutes);
+  app.use("/api", networkRoutes);
+  app.use("/api", diagnosticsRoutes);
+  app.use("/api", monitoringRoutes);
+  app.use("/api", pairingRoutes);
 
   app.use(errorHandler);
   return app;

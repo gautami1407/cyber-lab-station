@@ -1,0 +1,1 @@
+ALTER TABLE "RemoteOperation" ADD COLUMN "resultJson" JSONB;

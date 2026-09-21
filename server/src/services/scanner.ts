@@ -5,6 +5,7 @@ import { assertIpInAllowlist, assertScanTargetAllowed } from "../lib/allowlist.j
 import { expandIpv4Range, parseCidr } from "../lib/ipv4.js";
 import { COMMON_PORTS, WEB_PORTS, conservativeServiceName, tcpConnect } from "../lib/tcp.js";
 import { audit } from "./audit.js";
+import { prisma } from "../prisma.js";
 import {
   createOperation,
   finishOperation,
@@ -72,6 +73,36 @@ export async function startPortScan(params: {
   return { operationId: op.id };
 }
 
+export async function startDeviceServiceScan(params: {
+  userId: string;
+  deviceId: string;
+  ip: string;
+  startPort: number;
+  endPort: number;
+  profile: string;
+}) {
+  const device = await prisma.device.findFirst({
+    where: { id: params.deviceId, userId: params.userId },
+    include: { authorizedNetwork: true },
+  });
+  if (!device || device.authorizedNetwork?.status !== "AUTHORIZED") throw Errors.targetForbidden();
+  const ports = mapPorts(params.profile, params.startPort, params.endPort);
+  const scan = await prisma.scan.create({
+    data: { userId: params.userId, deviceId: device.id, target: device.ipAddress, status: "QUEUED" },
+  });
+  const operation = await createOperation({
+    userId: params.userId,
+    type: "PORT_SCAN",
+    project: "NetLink Service Discovery",
+    operation: `Service scan (${params.profile})`,
+    target: device.ipAddress,
+    total: ports.length,
+  });
+  await audit({ userId: params.userId, action: "SERVICE_SCAN_STARTED", success: true, target: device.ipAddress, ip: params.ip });
+  void runPortScan(operation.id, device.ipAddress, ports, params.userId, params.ip, device.ipAddress, scan.id, device.id);
+  return { operationId: operation.id, scanId: scan.id };
+}
+
 async function runPortScan(
   operationId: string,
   ip: string,
@@ -79,8 +110,11 @@ async function runPortScan(
   userId: string,
   client: string,
   host: string,
+  scanId?: string,
+  deviceId?: string,
 ) {
   await markRunning(operationId);
+  if (scanId) await prisma.scan.update({ where: { id: scanId }, data: { status: "RUNNING", startedAt: new Date() } });
   const results: Array<{
     port: number;
     protocol: "TCP";
@@ -105,6 +139,7 @@ async function runPortScan(
     });
     if (await wasCancelled(operationId)) {
       await finishOperation(operationId, "cancelled", { results });
+      if (scanId) await prisma.scan.update({ where: { id: scanId }, data: { status: "CANCELLED", completedAt: new Date() } });
       return;
     }
     const payload: Record<string, unknown> = {
@@ -117,6 +152,20 @@ async function runPortScan(
       lab: true,
     };
     const finished = await finishOperation(operationId, "completed", payload as Prisma.InputJsonValue);
+    if (scanId && deviceId) {
+      await prisma.scanResult.createMany({
+        data: results.map((result) => ({ scanId, port: result.port, protocol: result.protocol, status: result.status, serviceName: result.service, responseTimeMs: result.responseTimeMs })),
+      });
+      for (const result of results) {
+        const service = await prisma.service.upsert({
+          where: { deviceId_port_protocol: { deviceId, port: result.port, protocol: result.protocol } },
+          update: { name: result.service, status: result.status.toUpperCase(), lastSeen: new Date() },
+          create: { deviceId, port: result.port, protocol: result.protocol, name: result.service, status: result.status.toUpperCase() },
+        });
+        await prisma.serviceObservation.create({ data: { serviceId: service.id, scanId, status: result.status.toUpperCase(), responseTimeMs: result.responseTimeMs } });
+      }
+      await prisma.scan.update({ where: { id: scanId }, data: { status: "COMPLETED", completedAt: new Date() } });
+    }
     payload.durationMs = finished.durationMs ?? 0;
     await prismaPatchDuration(operationId, payload);
     await audit({ userId, action: "PORT_SCAN_COMPLETED", success: true, target: host, ip: client });
@@ -125,6 +174,7 @@ async function runPortScan(
       code: "SCAN_FAILED",
       message: "The scan could not be completed.",
     });
+    if (scanId) await prisma.scan.update({ where: { id: scanId }, data: { status: "FAILED", completedAt: new Date() } });
     await audit({ userId, action: "PORT_SCAN_COMPLETED", success: false, target: host, ip: client });
   }
 }

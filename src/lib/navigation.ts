@@ -6,6 +6,7 @@ import {
   Globe,
   LayoutDashboard,
   Lock,
+  Monitor,
   Radar,
   ScanSearch,
   Settings,
@@ -14,6 +15,11 @@ import {
 
 export type AppPath =
   | "/dashboard"
+  | "/networks"
+  | "/topology"
+  | "/monitoring"
+  | "/remote-devices"
+  | "/devices/$id"
   | "/projects/authentication"
   | "/projects/port-scanner"
   | "/projects/ip-range-scanner"
@@ -37,9 +43,41 @@ export const NAV_ITEMS: NavItem[] = [
     to: "/dashboard",
     label: "Dashboard",
     title: "Dashboard",
-    description: "Overview of CyberLab projects, activity, and demo status.",
+    description: "Overview of NetLink network state, security activity, and service health.",
     icon: LayoutDashboard,
     group: "overview",
+  },
+  {
+    to: "/networks",
+    label: "Networks & Devices",
+    title: "Networks & Devices",
+    description: "Authorize local networks and inspect observed devices.",
+    icon: Radar,
+    group: "overview",
+  },
+  {
+    to: "/topology",
+    label: "Topology",
+    title: "Network Topology",
+    description: "Inspect observed logical relationships between networks and devices.",
+    icon: Radar,
+    group: "overview",
+  },
+  {
+    to: "/monitoring",
+    label: "Monitoring",
+    title: "Events & Alerts",
+    description: "Review evidence-based events and manage security alerts.",
+    icon: Activity,
+    group: "ops",
+  },
+  {
+    to: "/remote-devices",
+    label: "Remote Devices",
+    title: "Remote Devices",
+    description: "Pair authorized agents and request real system information.",
+    icon: Monitor,
+    group: "ops",
   },
   {
     to: "/projects/authentication",
@@ -53,7 +91,7 @@ export const NAV_ITEMS: NavItem[] = [
     to: "/projects/port-scanner",
     label: "Port Scanner",
     title: "Port Scanner",
-    description: "Simulated TCP port discovery against an authorized lab target.",
+    description: "TCP service discovery against an explicitly authorized local target.",
     icon: ScanSearch,
     group: "projects",
   },
@@ -61,7 +99,7 @@ export const NAV_ITEMS: NavItem[] = [
     to: "/projects/ip-range-scanner",
     label: "IP Range Scanner",
     title: "IP Range Scanner",
-    description: "Simulated host discovery for an authorized lab network.",
+    description: "Host discovery for a network explicitly authorized by the operator.",
     icon: Radar,
     group: "projects",
   },
@@ -77,7 +115,7 @@ export const NAV_ITEMS: NavItem[] = [
     to: "/projects/subdomain-enumeration",
     label: "Subdomain Enumeration",
     title: "Subdomain Enumeration",
-    description: "Simulated subdomain discovery for an authorized domain.",
+    description: "DNS discovery for an explicitly authorized domain.",
     icon: Globe,
     group: "projects",
   },
@@ -108,8 +146,8 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 export const BRAND = {
-  name: "CyberLab",
-  product: "CyberLab Security Toolkit",
+  name: "NetLink",
+  product: "NetLink Network Intelligence Platform",
   icon: Shield,
 };
 
@@ -121,7 +159,7 @@ export function getPageMeta(pathname: string): NavItem {
 export function pageHead(title: string, description: string) {
   return {
     meta: [
-      { title: `${title} · CyberLab` },
+      { title: `${title} · NetLink` },
       { name: "description", content: description },
     ],
   };

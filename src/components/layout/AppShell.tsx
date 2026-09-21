@@ -89,7 +89,7 @@ function SidebarNav() {
           <span>
             <span className="block text-sm font-semibold tracking-tight">{BRAND.name}</span>
             <span className="block font-mono text-[10px] tracking-widest text-primary uppercase">
-              Security Toolkit
+              Network Intelligence
             </span>
           </span>
         </Link>

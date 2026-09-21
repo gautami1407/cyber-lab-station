@@ -29,18 +29,29 @@ enum OperationStatus {
 }
 
 model User {
-  id               String    @id @default(cuid())
-  username         String    @unique
-  email            String    @unique
-  passwordHash     String
-  role             Role      @default(user)
-  failedLoginCount Int       @default(0)
-  lockedUntil      DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-  sessions         Session[]
-  operations       SecurityOperation[]
-  auditLogs        AuditLog[]
+  id                 String              @id @default(cuid())
+  username           String              @unique
+  email              String              @unique
+  passwordHash       String
+  role               Role                @default(user)
+  failedLoginCount   Int                 @default(0)
+  lockedUntil        DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  sessions           Session[]
+  operations         SecurityOperation[]
+  auditLogs          AuditLog[]
+  authorizedNetworks AuthorizedNetwork[]
+  devices            Device[]
+  scans              Scan[]
+  monitoringConfigs  MonitoringConfig[]
+  securityEvents     SecurityEvent[]
+  alerts             SecurityAlert[]
+  pairingRequests    PairingRequest[]
+  pairedDevices      PairedDevice[]
+  remoteSessions     RemoteSession[]
+  remoteOperations   RemoteOperation[]
+  fileTransfers      FileTransfer[]
 
   @@index([email])
   @@index([username])
@@ -75,25 +86,25 @@ model LoginAttempt {
 }
 
 model SecurityOperation {
-  id            String          @id @default(cuid())
-  userId        String
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type          OperationType
-  project       String
-  operation     String
-  targetMasked  String
-  targetHash    String
-  status        OperationStatus @default(queued)
-  progressDone  Int             @default(0)
-  progressTotal Int             @default(0)
-  resultJson    Json?
-  errorCode     String?
-  errorMessage  String?
-  startedAt     DateTime?
-  completedAt   DateTime?
-  durationMs    Int?
-  createdAt     DateTime        @default(now())
-  cancelRequested Boolean       @default(false)
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            OperationType
+  project         String
+  operation       String
+  targetMasked    String
+  targetHash      String
+  status          OperationStatus @default(queued)
+  progressDone    Int             @default(0)
+  progressTotal   Int             @default(0)
+  resultJson      Json?
+  errorCode       String?
+  errorMessage    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationMs      Int?
+  createdAt       DateTime        @default(now())
+  cancelRequested Boolean         @default(false)
 
   @@index([userId, createdAt])
   @@index([status])
@@ -112,4 +123,271 @@ model AuditLog {
 
   @@index([userId, createdAt])
   @@index([action, createdAt])
+}
+
+model AuthorizedNetwork {
+  id            String             @id @default(cuid())
+  userId        String
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  interfaceName String
+  ipv4Address   String
+  cidr          String
+  gateway       String?
+  status        String             @default("AUTHORIZED")
+  authorizedAt  DateTime           @default(now())
+  revokedAt     DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  interfaces    NetworkInterface[]
+  devices       Device[]
+
+  @@unique([userId, cidr])
+  @@index([userId, status])
+}
+
+model NetworkInterface {
+  id                  String             @id @default(cuid())
+  authorizedNetworkId String?
+  authorizedNetwork   AuthorizedNetwork? @relation(fields: [authorizedNetworkId], references: [id], onDelete: SetNull)
+  name                String
+  ipv4Address         String
+  cidr                String
+  gateway             String?
+  macAddress          String?
+  isUp                Boolean            @default(true)
+  observedAt          DateTime           @default(now())
+
+  @@index([authorizedNetworkId])
+  @@index([ipv4Address])
+}
+
+model Device {
+  id                  String              @id @default(cuid())
+  userId              String
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  authorizedNetworkId String?
+  authorizedNetwork   AuthorizedNetwork?  @relation(fields: [authorizedNetworkId], references: [id], onDelete: SetNull)
+  ipAddress           String
+  macAddress          String?
+  hostname            String?
+  vendor              String?
+  status              String              @default("UNKNOWN")
+  riskLevel           String              @default("LOW")
+  firstSeen           DateTime            @default(now())
+  lastSeen            DateTime            @default(now())
+  latencyMs           Int?
+  observations        DeviceObservation[]
+  scans               Scan[]
+  services            Service[]
+  securityEvents      SecurityEvent[]
+  alerts              SecurityAlert[]
+
+  @@unique([userId, ipAddress])
+  @@index([userId, status])
+  @@index([authorizedNetworkId, lastSeen])
+}
+
+model DeviceObservation {
+  id         String   @id @default(cuid())
+  deviceId   String
+  device     Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  status     String
+  ipAddress  String
+  macAddress String?
+  hostname   String?
+  latencyMs  Int?
+  observedAt DateTime @default(now())
+
+  @@index([deviceId, observedAt])
+}
+
+model Scan {
+  id          String       @id @default(cuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId    String?
+  device      Device?      @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  target      String
+  status      String       @default("QUEUED")
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime     @default(now())
+  results     ScanResult[]
+
+  @@index([userId, createdAt])
+  @@index([deviceId, createdAt])
+}
+
+model ScanResult {
+  id             String @id @default(cuid())
+  scanId         String
+  scan           Scan   @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  port           Int
+  protocol       String
+  status         String
+  serviceName    String
+  responseTimeMs Int?
+
+  @@unique([scanId, port, protocol])
+  @@index([scanId, status])
+}
+
+model Service {
+  id           String               @id @default(cuid())
+  deviceId     String
+  device       Device               @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  port         Int
+  protocol     String
+  name         String
+  status       String               @default("UNKNOWN")
+  firstSeen    DateTime             @default(now())
+  lastSeen     DateTime             @default(now())
+  observations ServiceObservation[]
+
+  @@unique([deviceId, port, protocol])
+  @@index([deviceId, status])
+}
+
+model ServiceObservation {
+  id             String   @id @default(cuid())
+  serviceId      String
+  service        Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  scanId         String?
+  observedAt     DateTime @default(now())
+  status         String
+  responseTimeMs Int?
+
+  @@index([serviceId, observedAt])
+  @@index([scanId])
+}
+
+model MonitoringConfig {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  intervalSeconds Int       @default(60)
+  enabled         Boolean   @default(false)
+  startedAt       DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId])
+}
+
+model SecurityEvent {
+  id          String          @id @default(cuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId    String?
+  device      Device?         @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  type        String
+  severity    String          @default("LOW")
+  description String
+  evidence    Json?
+  createdAt   DateTime        @default(now())
+  alerts      SecurityAlert[]
+
+  @@index([userId, createdAt])
+  @@index([deviceId, createdAt])
+  @@index([type, createdAt])
+}
+
+model SecurityAlert {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventId     String?
+  event       SecurityEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  deviceId    String?
+  device      Device?        @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  severity    String
+  status      String         @default("OPEN")
+  title       String
+  explanation String
+  evidence    Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([userId, status, createdAt])
+  @@index([deviceId, createdAt])
+}
+
+model PairingRequest {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceName  String
+  publicKey   String
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  resolvedAt  DateTime?
+  pairedDevice PairedDevice?
+
+  @@index([userId, status, createdAt])
+}
+
+model PairedDevice {
+  id          String          @id @default(cuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestId   String          @unique
+  request     PairingRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  deviceName  String
+  publicKey   String
+  status      String          @default("PAIRED")
+  createdAt   DateTime        @default(now())
+  revokedAt   DateTime?
+  connectionStatus String        @default("DISCONNECTED")
+  lastSeen       DateTime?
+  lastHeartbeat  DateTime?
+  sessions    RemoteSession[]
+  operations  RemoteOperation[]
+  transfers   FileTransfer[]
+
+  @@index([userId, status])
+}
+
+model RemoteSession {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pairedDeviceId String
+  pairedDevice   PairedDevice @relation(fields: [pairedDeviceId], references: [id], onDelete: Cascade)
+  status         String       @default("ACTIVE")
+  startedAt      DateTime     @default(now())
+  endedAt        DateTime?
+  operations     RemoteOperation[]
+
+  @@index([userId, status])
+}
+
+model RemoteOperation {
+  id             String        @id @default(cuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pairedDeviceId String
+  pairedDevice   PairedDevice  @relation(fields: [pairedDeviceId], references: [id], onDelete: Cascade)
+  sessionId      String?
+  session        RemoteSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  operation      String
+  status         String        @default("REJECTED")
+  reason         String?
+  resultJson     Json?
+  createdAt      DateTime      @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model FileTransfer {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pairedDeviceId String
+  pairedDevice   PairedDevice @relation(fields: [pairedDeviceId], references: [id], onDelete: Cascade)
+  direction      String
+  safeName       String
+  status         String       @default("REJECTED")
+  sizeBytes      Int?
+  createdAt      DateTime     @default(now())
+
+  @@index([userId, createdAt])
 }
