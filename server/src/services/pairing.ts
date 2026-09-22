@@ -1,9 +1,9 @@
 import { Errors } from "../errors.js";
 import { prisma } from "../prisma.js";
 import { audit } from "./audit.js";
-import { disconnectAgent, sendAgentOperation } from "../realtime.js";
+import { cleanupScreenStream, disconnectAgent, getActiveScreenStreamForSession, registerScreenStreamState, sendAgentOperation } from "../realtime.js";
 
-const ALLOWED_OPERATIONS = new Set(["GET_SYSTEM_INFO", "VIEW_SCREEN", "REMOTE_INPUT", "MEDIA_CONTROL", "FILE_UPLOAD", "FILE_DOWNLOAD"]);
+const ALLOWED_OPERATIONS = new Set(["GET_SYSTEM_INFO", "SCREEN_CAPTURE", "SCREEN_STREAM", "SCREEN_STREAM_STOP"]);
 
 export async function requestPairing(userId: string, deviceName: string, publicKey: string, ip: string) {
   const request = await prisma.pairingRequest.create({ data: { userId, deviceName, publicKey } });
@@ -69,7 +69,24 @@ export async function requestRemoteOperation(userId: string, pairedDeviceId: str
     if (!session) throw Errors.forbidden();
   }
   const result = await prisma.remoteOperation.create({ data: { userId, pairedDeviceId, sessionId, operation, status: "QUEUED" } });
-  if (!sendAgentOperation(pairedDeviceId, result.id, sessionId ?? "", operation)) {
+
+  let streamId: string | undefined;
+  if (operation === "SCREEN_STREAM") {
+    streamId = registerScreenStreamState({
+      streamId: "stream-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      userId,
+      pairedDeviceId,
+      sessionId: sessionId ?? "",
+      operationId: result.id,
+    }).streamId;
+    console.info("[STREAM DEBUG] stream registered", { streamId, operationId: result.id, pairedDeviceId, sessionId });
+  } else if (operation === "SCREEN_STREAM_STOP") {
+    streamId = getActiveScreenStreamForSession(pairedDeviceId, sessionId ?? "")?.streamId;
+  }
+
+  if (!sendAgentOperation(pairedDeviceId, result.id, sessionId ?? "", operation, streamId)) {
+    console.warn("[STREAM DEBUG] stream start sent to agent failed", { operationId: result.id, pairedDeviceId, streamId });
+    if (streamId) await cleanupScreenStream(streamId, "No authenticated NetLink agent is connected.", userId).catch(() => undefined);
     const rejected = await prisma.remoteOperation.update({ where: { id: result.id }, data: { status: "REJECTED", reason: "No authenticated NetLink agent is connected." } });
     await audit({ userId, action: "REMOTE_OPERATION_REJECTED", success: false, target: rejected.id, ip, metadata: { operation } });
     return rejected;

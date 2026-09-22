@@ -10,8 +10,134 @@ const clients = new Map<string, Set<WebSocketClient>>();
 const agents = new Map<string, WebSocketClient>();
 const heartbeatTimes = new Map<string, number>();
 type ScreenTransfer = { transferId: string; operationId: string; pairedDeviceId: string; userId: string; byteLength: number; receivedBytes: number; nextSequence: number; totalChunks: number; timeout: NodeJS.Timeout };
+export type ScreenStreamStatus = "STARTING" | "STREAMING" | "STOPPING" | "STOPPED" | "FAILED";
+export type ScreenStreamRecord = {
+  streamId: string;
+  operationId: string;
+  pairedDeviceId: string;
+  userId: string;
+  sessionId: string;
+  status: ScreenStreamStatus;
+  createdAt: number;
+  lastFrameAt: number;
+  lastChunkAt: number;
+  currentFrameId: string;
+  currentFrameBytes: number;
+  currentChunkIndex: number;
+  pendingFrames: Array<{ frameId: string; createdAt: number; width?: number; height?: number; mimeType?: string; totalBytes?: number; payload?: string }>;
+  framesCaptured: number;
+  framesDelivered: number;
+  framesDropped: number;
+  timeout?: NodeJS.Timeout;
+};
+type StreamFrame = { streamId: string; operationId: string; pairedDeviceId: string; frameId: string; totalChunks: number; chunks: Map<number, string>; width: number; height: number; mimeType: string; totalBytes: number; receivedBytes: number; isComplete: boolean };
 const screenTransfers = new Map<string, ScreenTransfer>();
+const screenStreams = new Map<string, ScreenStreamRecord>();
+const streamFrames = new Map<string, StreamFrame>();
 let staleTimer: NodeJS.Timeout | undefined;
+
+export function createScreenStreamState(input: { streamId: string; userId: string; pairedDeviceId: string; sessionId: string; operationId: string }): ScreenStreamRecord {
+  return {
+    streamId: input.streamId,
+    operationId: input.operationId,
+    pairedDeviceId: input.pairedDeviceId,
+    userId: input.userId,
+    sessionId: input.sessionId,
+    status: "STARTING",
+    createdAt: Date.now(),
+    lastFrameAt: 0,
+    lastChunkAt: 0,
+    currentFrameId: "",
+    currentFrameBytes: 0,
+    currentChunkIndex: 0,
+    pendingFrames: [],
+    framesCaptured: 0,
+    framesDelivered: 0,
+    framesDropped: 0,
+  };
+}
+
+export function registerScreenStreamState(input: { streamId: string; userId: string; pairedDeviceId: string; sessionId: string; operationId: string }): ScreenStreamRecord {
+  const existing = getActiveScreenStreamForSession(input.pairedDeviceId, input.sessionId);
+  if (existing && existing.status !== "STOPPED" && existing.status !== "FAILED") {
+    return existing;
+  }
+
+  const activeStreams = [...screenStreams.values()].filter((stream) => stream.userId === input.userId && stream.status !== "STOPPED" && stream.status !== "FAILED").length;
+  if (activeStreams >= Math.max(1, config.screenStreamMaxConcurrentStreams)) {
+    throw new Error("The maximum active screen streams has been reached.");
+  }
+
+  const stream = createScreenStreamState(input);
+  const timeout = setTimeout(() => void failScreenStream(stream.streamId, "Stream timeout"), config.screenStreamTimeoutMs);
+  stream.timeout = timeout;
+  screenStreams.set(stream.streamId, stream);
+  return stream;
+}
+
+export function transitionScreenStreamState(stream: ScreenStreamRecord, nextStatus: string): ScreenStreamRecord {
+  const allowedTransitions: Record<ScreenStreamStatus, ScreenStreamStatus[]> = {
+    STARTING: ["STARTING", "STREAMING", "FAILED"],
+    STREAMING: ["STOPPING", "FAILED", "STOPPED"],
+    STOPPING: ["STOPPED", "FAILED"],
+    STOPPED: ["FAILED"],
+    FAILED: ["FAILED"],
+  };
+  const current = stream.status;
+  const next = nextStatus as ScreenStreamStatus;
+  if (!allowedTransitions[current]?.includes(next)) {
+    throw new Error(`Invalid stream transition: ${current} -> ${nextStatus}`);
+  }
+  stream.status = next;
+  return stream;
+}
+
+export function enforceScreenStreamBackpressure(stream: ScreenStreamRecord, frame: { frameId: string; createdAt: number; width?: number; height?: number; mimeType?: string; totalBytes?: number; payload?: string }): void {
+  const maxPending = Math.max(1, Math.min(config.screenStreamMaxPendingFrames, 256));
+  const queue = stream.pendingFrames;
+  if (queue.length >= maxPending) {
+    const overflow = queue.length - maxPending + 1;
+    for (let index = 0; index < overflow; index += 1) queue.shift();
+    stream.framesDropped += overflow;
+  }
+  queue.push({ ...frame, createdAt: frame.createdAt || Date.now() });
+  if (queue.length > maxPending) {
+    const excess = queue.length - maxPending;
+    for (let index = 0; index < excess; index += 1) queue.shift();
+    stream.framesDropped += excess;
+  }
+  if (queue.length > maxPending) {
+    queue.splice(0, queue.length - maxPending);
+  }
+}
+
+export function getActiveScreenStreamForSession(pairedDeviceId: string, sessionId: string): ScreenStreamRecord | undefined {
+  for (const stream of screenStreams.values()) {
+    if (stream.pairedDeviceId === pairedDeviceId && stream.sessionId === sessionId && stream.status !== "STOPPED" && stream.status !== "FAILED") return stream;
+  }
+  return undefined;
+}
+
+export function validateScreenStreamOwnership(stream: ScreenStreamRecord | undefined, userId: string, pairedDeviceId: string, sessionId: string): boolean {
+  return Boolean(stream && stream.userId === userId && stream.pairedDeviceId === pairedDeviceId && stream.sessionId === sessionId && stream.status !== "STOPPED" && stream.status !== "FAILED");
+}
+
+export function validateScreenStreamFrame(stream: ScreenStreamRecord | undefined, input: { streamId: string; frameId: string; pairedDeviceId?: string; sessionId?: string; userId?: string; chunkIndex?: number; totalChunks?: number; payload?: string; totalBytes?: number }, agentPairedDeviceId: string): { ok: boolean; reason?: string } {
+  if (!stream) return { ok: false, reason: "unknown streamId" };
+  if (stream.streamId !== input.streamId) return { ok: false, reason: "unknown streamId" };
+  if (input.pairedDeviceId && input.pairedDeviceId !== stream.pairedDeviceId) return { ok: false, reason: "wrong pairedDeviceId" };
+  if (input.sessionId && input.sessionId !== stream.sessionId) return { ok: false, reason: "wrong sessionId" };
+  if (input.userId && input.userId !== stream.userId) return { ok: false, reason: "wrong userId" };
+  if (stream.pairedDeviceId !== agentPairedDeviceId) return { ok: false, reason: "wrong authenticated agent" };
+  if (!input.frameId || input.frameId.length === 0) return { ok: false, reason: "unknown frameId" };
+  if (!Number.isInteger(input.chunkIndex) || input.chunkIndex! < 0) return { ok: false, reason: "invalid chunkIndex" };
+  if (!Number.isInteger(input.totalChunks) || input.totalChunks! < 1) return { ok: false, reason: "invalid totalChunks" };
+  if (input.chunkIndex! >= input.totalChunks!) return { ok: false, reason: "invalid chunkIndex" };
+  if (!input.payload || input.payload.length === 0) return { ok: false, reason: "malformed payload" };
+  if (input.payload.length > config.screenStreamChunkBytes) return { ok: false, reason: "oversized chunk" };
+  if (input.totalBytes !== undefined && input.totalBytes > config.screenStreamMaxFrameBytes) return { ok: false, reason: "oversized frame" };
+  return { ok: true };
+}
 
 function cookieValue(request: IncomingMessage, name: string): string | null {
   const header = request.headers.cookie ?? "";
@@ -49,8 +175,18 @@ export function attachRealtime(server: Server) {
 }
 
 function reject(socket: NodeJS.WritableStream) {
-  socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
-  socket.end();
+  const nodeSocket = socket as NodeJS.Socket & { destroyed?: boolean; writableEnded?: boolean };
+  if (nodeSocket.destroyed || nodeSocket.writableEnded) return;
+  try {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+  } catch {
+    // Ignore reset/disconnect races during unauthorized upgrade rejections.
+  }
+  try {
+    socket.end();
+  } catch {
+    // Ignore already-closed sockets during upgrade rejection.
+  }
 }
 
 export function publishUserEvent(userId: string, type: string, data: unknown) {
@@ -69,7 +205,10 @@ export function closeRealtime() {
   agents.clear();
   heartbeatTimes.clear();
   for (const transfer of screenTransfers.values()) clearTimeout(transfer.timeout);
+  for (const stream of screenStreams.values()) clearTimeout(stream.timeout);
   screenTransfers.clear();
+  screenStreams.clear();
+  streamFrames.clear();
 }
 
 async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.WritableStream, head: Buffer, pairedDeviceId: string | null) {
@@ -111,10 +250,19 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           const transferId = String((message as { transferId?: string }).transferId ?? "");
           const byteLength = Number((message as { byteLength?: number }).byteLength);
           const totalChunks = Number((message as { totalChunks?: number }).totalChunks);
-          const operation = await prisma.remoteOperation.findFirst({ where: { id: operationId, pairedDeviceId, operation: "SCREEN_CAPTURE", status: "QUEUED" }, include: { user: true } });
-          if (!operation || !transferId || !Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > config.screenCaptureMaxBytes || !Number.isSafeInteger(totalChunks) || totalChunks < 1 || totalChunks > Math.ceil(config.screenCaptureMaxBytes / config.screenCaptureChunkBytes)) return client.close(1008, "Invalid screen transfer");
+          if (!transferId || !Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > config.screenCaptureMaxBytes || !Number.isSafeInteger(totalChunks) || totalChunks < 1 || totalChunks > Math.ceil(config.screenCaptureMaxBytes / config.screenCaptureChunkBytes)) {
+            return client.close(1008, "Invalid screen transfer");
+          }
           const timeout = setTimeout(() => void failScreenTransfer(transferId, "Capture timeout"), config.screenCaptureTimeoutMs);
-          screenTransfers.set(transferId, { transferId, operationId, pairedDeviceId, userId: operation.userId, byteLength, receivedBytes: 0, nextSequence: 0, totalChunks, timeout });
+          screenTransfers.set(transferId, { transferId, operationId, pairedDeviceId, userId: "", byteLength, receivedBytes: 0, nextSequence: 0, totalChunks, timeout });
+          const operation = await prisma.remoteOperation.findFirst({ where: { id: operationId, pairedDeviceId, operation: "SCREEN_CAPTURE", status: "QUEUED" }, include: { user: true } });
+          if (!operation) {
+            clearTimeout(timeout);
+            screenTransfers.delete(transferId);
+            return client.close(1008, "Invalid screen transfer");
+          }
+          const transfer = screenTransfers.get(transferId);
+          if (transfer) transfer.userId = operation.userId;
           publishUserEvent(operation.userId, "SCREEN_START", { operationId, transferId, metadata: (message as { metadata?: unknown }).metadata });
           return;
         }
@@ -143,6 +291,114 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           publishUserEvent(transfer.userId, "SCREEN_END", { operationId: transfer.operationId, transferId, metadata });
           return;
         }
+        if (authenticated && message.type === "SCREEN_STREAM_START") {
+          const operationId = String((message as { operationId?: string }).operationId ?? "");
+          const streamId = String((message as { streamId?: string }).streamId ?? "");
+          const metadata = (message as { metadata?: Record<string, unknown> }).metadata ?? {};
+          console.info("[STREAM DEBUG] stream start received from agent", { operationId, streamId, pairedDeviceId });
+          const existing = await prisma.remoteOperation.findFirst({ where: { id: operationId, pairedDeviceId, operation: "SCREEN_STREAM", status: "QUEUED" }, include: { user: true } });
+          if (!streamId || !existing) return client.close(1008, "Invalid screen stream");
+          const current = screenStreams.get(streamId) ?? createScreenStreamState({ streamId, userId: existing.userId, pairedDeviceId, sessionId: String((message as { sessionId?: string }).sessionId ?? ""), operationId });
+          if (screenStreams.has(streamId) && current.status !== "STARTING") return client.close(1008, "Duplicate screen stream");
+          current.lastChunkAt = Date.now();
+          current.lastFrameAt = Date.now();
+          const timeout = setTimeout(() => void failScreenStream(streamId, "Stream timeout"), config.screenStreamTimeoutMs);
+          current.timeout = timeout;
+          screenStreams.set(streamId, current);
+          transitionScreenStreamState(current, "STARTING");
+          await audit({ userId: existing.userId, action: "SCREEN_STREAM_STARTED", success: true, target: operationId, metadata: { streamId, ...metadata } }).catch(() => undefined);
+          console.info("[STREAM DEBUG] stream start forwarded to browser", { operationId, streamId });
+          publishUserEvent(existing.userId, "SCREEN_STREAM_START", { operationId, streamId, metadata });
+          return;
+        }
+        if (authenticated && message.type === "SCREEN_STREAM_FRAME_START") {
+          const streamId = String((message as { streamId?: string }).streamId ?? "");
+          const stream = screenStreams.get(streamId);
+          if (!stream || stream.pairedDeviceId !== pairedDeviceId) return client.close(1008, "Invalid stream frame start");
+          const frameId = String((message as { frameId?: string }).frameId ?? "");
+          const totalChunks = Number((message as { totalChunks?: number }).totalChunks);
+          const width = Number((message as { width?: number }).width);
+          const height = Number((message as { height?: number }).height);
+          const mimeType = String((message as { mimeType?: string }).mimeType ?? "image/png");
+          const totalBytes = Number((message as { totalBytes?: number }).totalBytes);
+          if (!frameId || !Number.isInteger(totalChunks) || totalChunks < 1 || !Number.isFinite(width) || !Number.isFinite(height) || totalBytes < 1 || totalBytes > config.screenStreamMaxFrameBytes) {
+            return client.close(1008, "Invalid stream frame metadata");
+          }
+          if (stream.currentFrameId && stream.currentFrameId !== frameId && stream.currentFrameBytes > 0) return client.close(1008, "Frame already in progress");
+          if (streamFrames.has(frameId)) return client.close(1008, "Duplicate stream frame");
+          const frame: StreamFrame = { streamId, operationId: stream.operationId, pairedDeviceId, frameId, totalChunks, chunks: new Map(), width, height, mimeType, totalBytes, receivedBytes: 0, isComplete: false };
+          streamFrames.set(frameId, frame);
+          stream.currentFrameId = frameId;
+          stream.currentFrameBytes = totalBytes;
+          stream.currentChunkIndex = 0;
+          stream.lastFrameAt = Date.now();
+          transitionScreenStreamState(stream, "STREAMING");
+          console.info("[STREAM DEBUG] frame start received from agent", { streamId, frameId, totalChunks });
+          publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME_START", { streamId: frame.streamId, operationId: frame.operationId, frameId, totalChunks, width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes });
+          return;
+        }
+        if (authenticated && message.type === "SCREEN_STREAM_CHUNK") {
+          const streamId = String((message as { streamId?: string }).streamId ?? "");
+          const stream = screenStreams.get(streamId);
+          if (!stream || stream.pairedDeviceId !== pairedDeviceId) return client.close(1008, "Invalid stream chunk");
+          const frameId = String((message as { frameId?: string }).frameId ?? "");
+          const frame = streamFrames.get(frameId);
+          const chunkIndex = Number((message as { chunkIndex?: number }).chunkIndex);
+          const totalChunks = Number((message as { totalChunks?: number }).totalChunks);
+          const payload = String((message as { payload?: string }).payload ?? "");
+          if (!frame || frame.streamId !== streamId || chunkIndex < 0 || chunkIndex >= totalChunks || totalChunks !== frame.totalChunks || payload.length === 0 || payload.length > config.screenStreamChunkBytes) {
+            return client.close(1008, "Invalid stream chunk");
+          }
+          if (frame.chunks.has(chunkIndex)) return client.close(1008, "Duplicate stream chunk");
+          if (frame.chunks.size !== chunkIndex) return client.close(1008, "Out-of-order stream chunk");
+          const chunk = Buffer.from(payload, "base64");
+          if (chunk.length === 0 || !Number.isFinite(frame.totalBytes) || frame.receivedBytes + chunk.length > frame.totalBytes) return client.close(1008, "Malformed stream payload");
+          frame.chunks.set(chunkIndex, chunk.toString("base64"));
+          frame.receivedBytes += chunk.length;
+          stream.lastChunkAt = Date.now();
+          stream.currentChunkIndex = chunkIndex + 1;
+          if (frame.chunks.size === frame.totalChunks) frame.isComplete = true;
+          console.info("[STREAM DEBUG] chunk received from agent", { streamId, frameId, chunkIndex, totalChunks });
+          publishUserEvent(stream.userId, "SCREEN_STREAM_CHUNK", { streamId: frame.streamId, operationId: frame.operationId, frameId, chunkIndex, totalChunks, payload });
+          return;
+        }
+        if (authenticated && message.type === "SCREEN_STREAM_FRAME_END") {
+          const streamId = String((message as { streamId?: string }).streamId ?? "");
+          const stream = screenStreams.get(streamId);
+          if (!stream || stream.pairedDeviceId !== pairedDeviceId) return client.close(1008, "Invalid stream frame end");
+          const frameId = String((message as { frameId?: string }).frameId ?? "");
+          const frame = streamFrames.get(frameId);
+          if (!frame || frame.streamId !== streamId) return client.close(1008, "Unknown stream frame");
+          if (!frame.isComplete || frame.receivedBytes !== frame.totalBytes) return client.close(1008, "Incomplete stream frame");
+          stream.framesCaptured += 1;
+          stream.framesDelivered += 1;
+          stream.pendingFrames.push({ frameId, createdAt: Date.now(), width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, payload: Array.from({ length: frame.totalChunks }, (_, chunkIndex) => frame.chunks.get(chunkIndex) ?? "").join("") });
+          enforceScreenStreamBackpressure(stream, { frameId, createdAt: Date.now(), width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, payload: Array.from({ length: frame.totalChunks }, (_, chunkIndex) => frame.chunks.get(chunkIndex) ?? "").join("") });
+          const payload = Array.from({ length: frame.totalChunks }, (_, chunkIndex) => frame.chunks.get(chunkIndex) ?? "").join("");
+          console.info("[STREAM DEBUG] frame end received from agent", { streamId, frameId, totalChunks: frame.totalChunks });
+          console.info("[STREAM DEBUG] frame forwarded to browser", { streamId, frameId, totalChunks: frame.totalChunks });
+          publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME_START", { streamId: frame.streamId, operationId: frame.operationId, frameId, totalChunks: frame.totalChunks, width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes });
+          publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME", { streamId: frame.streamId, operationId: frame.operationId, frameId, width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, data: payload });
+          publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME_END", { streamId: frame.streamId, operationId: frame.operationId, frameId, totalChunks: frame.totalChunks });
+          streamFrames.delete(frameId);
+          stream.currentFrameId = "";
+          stream.currentFrameBytes = 0;
+          stream.currentChunkIndex = 0;
+          return;
+        }
+        if (authenticated && message.type === "SCREEN_STREAM_STOPPED") {
+          const streamId = String((message as { streamId?: string }).streamId ?? "");
+          const stream = screenStreams.get(streamId);
+          if (!stream || stream.pairedDeviceId !== pairedDeviceId) return client.close(1008, "Invalid stream stop");
+          clearTimeout(stream.timeout);
+          transitionScreenStreamState(stream, "STOPPED");
+          screenStreams.delete(streamId);
+          const metadata = (message as { metadata?: Record<string, unknown> }).metadata ?? { frameCount: stream.framesDelivered };
+          await prisma.remoteOperation.update({ where: { id: stream.operationId }, data: { status: "COMPLETED", resultJson: metadata as never } }).catch(() => undefined);
+          await audit({ userId: stream.userId, action: "SCREEN_STREAM_STOPPED", success: true, target: stream.operationId, metadata: { streamId, frameCount: stream.framesDelivered, ...metadata } }).catch(() => undefined);
+          publishUserEvent(stream.userId, "SCREEN_STREAM_STOPPED", { operationId: stream.operationId, streamId, metadata });
+          return;
+        }
         if (!authenticated || message.type !== "REMOTE_RESULT" || !message.operationId) return client.close(1008, "Invalid agent message");
         const status = message.status ?? "FAILED";
         if (!["COMPLETED", "FAILED", "UNSUPPORTED"].includes(status)) return client.close(1008, "Invalid operation status");
@@ -168,7 +424,28 @@ async function cleanupAgent(pairedDeviceId: string, reason: string) {
   const operations = await prisma.remoteOperation.updateMany({ where: { pairedDeviceId, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "FAILED", reason } });
   if (operations.count > 0) await audit({ userId: paired.userId, action: "REMOTE_OPERATION_FAILED", success: false, target: pairedDeviceId, metadata: { reason, count: operations.count } });
   for (const transfer of [...screenTransfers.values()]) if (transfer.pairedDeviceId === pairedDeviceId) await failScreenTransfer(transfer.transferId, reason);
+  for (const stream of [...screenStreams.values()]) if (stream.pairedDeviceId === pairedDeviceId) await failScreenStream(stream.streamId, reason);
+  for (const frame of [...streamFrames.values()]) if (frame.pairedDeviceId === pairedDeviceId) streamFrames.delete(frame.frameId);
   await audit({ userId: paired.userId, action: reason === "Agent heartbeat timeout" ? "AGENT_HEARTBEAT_TIMEOUT" : "AGENT_DISCONNECTED", success: false, target: pairedDeviceId, metadata: { reason } }).catch(() => undefined);
+}
+
+export async function cleanupScreenStream(streamId: string, reason: string, userId?: string) {
+  const stream = screenStreams.get(streamId);
+  if (!stream) return;
+  if (stream.timeout) clearTimeout(stream.timeout);
+  stream.timeout = undefined;
+  stream.status = "FAILED";
+  stream.pendingFrames = [];
+  stream.currentFrameId = "";
+  stream.currentFrameBytes = 0;
+  stream.currentChunkIndex = 0;
+  screenStreams.delete(streamId);
+  for (const frame of [...streamFrames.values()]) if (frame.streamId === streamId) streamFrames.delete(frame.frameId);
+  const targetUserId = userId ?? stream.userId;
+  const action = reason.toLowerCase().includes("timeout") ? "SCREEN_STREAM_TIMEOUT" : "SCREEN_STREAM_FAILED";
+  await prisma.remoteOperation.update({ where: { id: stream.operationId }, data: { status: "FAILED", reason } }).catch(() => undefined);
+  await audit({ userId: targetUserId, action, success: false, target: stream.operationId, metadata: { streamId, reason } }).catch(() => undefined);
+  publishUserEvent(targetUserId, "SCREEN_STREAM_ERROR", { operationId: stream.operationId, streamId, reason });
 }
 
 async function failScreenTransfer(transferId: string, reason: string) {
@@ -179,6 +456,22 @@ async function failScreenTransfer(transferId: string, reason: string) {
   await prisma.remoteOperation.update({ where: { id: transfer.operationId }, data: { status: "FAILED", reason } }).catch(() => undefined);
   await audit({ userId: transfer.userId, action: "SCREEN_CAPTURE_FAILED", success: false, target: transfer.operationId, metadata: { reason } }).catch(() => undefined);
   publishUserEvent(transfer.userId, "SCREEN_FAILED", { operationId: transfer.operationId, transferId, reason });
+}
+
+async function failScreenStream(streamId: string, reason: string) {
+  const stream = screenStreams.get(streamId);
+  if (!stream) return;
+  const action = reason.toLowerCase().includes("timeout") ? "SCREEN_STREAM_TIMEOUT" : "SCREEN_STREAM_FAILED";
+  clearTimeout(stream.timeout);
+  stream.pendingFrames = [];
+  stream.currentFrameId = "";
+  stream.currentFrameBytes = 0;
+  stream.currentChunkIndex = 0;
+  screenStreams.delete(streamId);
+  for (const frame of [...streamFrames.values()]) if (frame.streamId === streamId) streamFrames.delete(frame.frameId);
+  await prisma.remoteOperation.update({ where: { id: stream.operationId }, data: { status: "FAILED", reason } }).catch(() => undefined);
+  await audit({ userId: stream.userId, action, success: false, target: stream.operationId, metadata: { streamId, reason } }).catch(() => undefined);
+  publishUserEvent(stream.userId, "SCREEN_STREAM_ERROR", { operationId: stream.operationId, streamId, reason });
 }
 
 export async function cleanupStaleAgents(now = Date.now()) {
@@ -192,10 +485,10 @@ export async function cleanupStaleAgents(now = Date.now()) {
   }
 }
 
-export function sendAgentOperation(pairedDeviceId: string, operationId: string, sessionId: string, operation: string) {
+export function sendAgentOperation(pairedDeviceId: string, operationId: string, sessionId: string, operation: string, streamId?: string) {
   const agent = agents.get(pairedDeviceId);
   if (!agent || agent.readyState !== WebSocket.OPEN) return false;
-  agent.send(JSON.stringify({ type: "REMOTE_OPERATION", operationId, sessionId, operation, timestamp: new Date().toISOString() }));
+  agent.send(JSON.stringify({ type: "REMOTE_OPERATION", operationId, sessionId, operation, streamId, timestamp: new Date().toISOString() }));
   return true;
 }
 

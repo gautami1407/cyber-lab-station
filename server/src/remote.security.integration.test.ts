@@ -44,6 +44,12 @@ describe.skipIf(!enabled)("remote ownership isolation", () => {
     await prisma.user.deleteMany({ where: { id: { in: [userA.id, userB.id] } } });
   });
 
+  it("accepts allowlisted SCREEN_CAPTURE requests for the active owner session", async () => {
+    const response = await userB.agent.post("/api/remote/operation").set("X-CSRF-Token", userB.csrf).send({ pairedDeviceId: pairedDeviceB, sessionId: sessionB, operation: "SCREEN_CAPTURE" });
+    expect(response.status).toBe(202);
+    expect(response.body.data.operation).toBe("SCREEN_CAPTURE");
+  });
+
   it("rejects cross-user pairing, session, operation, and result access", async () => {
     expect((await userA.agent.delete(`/api/pairing/${pairedDeviceB}`).set("X-CSRF-Token", userA.csrf)).status).toBe(404);
     expect((await userA.agent.post("/api/remote/session").set("X-CSRF-Token", userA.csrf).send({ pairedDeviceId: pairedDeviceB })).status).toBe(403);

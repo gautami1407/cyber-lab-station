@@ -53,6 +53,12 @@ export const config = {
   screenCaptureMaxBytes: num("SCREEN_CAPTURE_MAX_BYTES", 2 * 1024 * 1024),
   screenCaptureChunkBytes: num("SCREEN_CAPTURE_CHUNK_BYTES", 8 * 1024),
   screenCaptureTimeoutMs: num("SCREEN_CAPTURE_TIMEOUT_MS", 15_000),
+  screenStreamFps: num("SCREEN_STREAM_FPS", 5),
+  screenStreamMaxFrameBytes: num("SCREEN_STREAM_MAX_FRAME_BYTES", 512 * 1024),
+  screenStreamChunkBytes: num("SCREEN_STREAM_CHUNK_BYTES", 8 * 1024),
+  screenStreamTimeoutMs: num("SCREEN_STREAM_TIMEOUT_MS", 30_000),
+  screenStreamMaxPendingFrames: num("SCREEN_STREAM_MAX_PENDING_FRAMES", 3),
+  screenStreamMaxConcurrentStreams: num("SCREEN_STREAM_MAX_CONCURRENT_STREAMS", 1),
   cookieName: "cyberlab.sid",
   apiVersion: "v1",
 };

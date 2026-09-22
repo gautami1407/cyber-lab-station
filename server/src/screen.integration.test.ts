@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -49,7 +49,9 @@ describe.skipIf(!enabled || !supported)("native screen capture integration", () 
     const keys = generateKeyPairSync("ed25519", { publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } });
     tempDir = mkdtempSync(join(tmpdir(), "netlink-screen-"));
     const statePath = join(tempDir, "identity.json");
-    writeFileSync(statePath, JSON.stringify({ agentId: "native-screen-agent", publicKey: keys.publicKey, privateKey: keys.privateKey }));
+    const normalizedPublicKey = String(keys.publicKey).trim().replace(/\r\n/g, "\n");
+    const agentId = createHash("sha256").update(Buffer.from(normalizedPublicKey, "utf8")).digest("hex").slice(0, 24);
+    writeFileSync(statePath, JSON.stringify({ agentId, publicKey: normalizedPublicKey, privateKey: String(keys.privateKey).trim() }));
     const pairing = await httpAgent.post("/api/pairing/request").set("X-CSRF-Token", csrf).send({ deviceName: "Native screen agent", publicKey: keys.publicKey });
     const approved = await httpAgent.post(`/api/pairing/${pairing.body.data.id}/approve`).set("X-CSRF-Token", csrf).send();
     const pairedDeviceId = approved.body.data.paired.id as string;
