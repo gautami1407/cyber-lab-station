@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanupScreenStream, createScreenStreamState, enforceScreenStreamBackpressure, getActiveScreenStreamForSession, registerScreenStreamState, transitionScreenStreamState, validateScreenStreamFrame, validateScreenStreamOwnership } from "./realtime.js";
+import { cleanupScreenStream, createScreenStreamState, enforceScreenStreamBackpressure, getActiveScreenStreamForSession, reconstructScreenStreamPayload, registerScreenStreamState, transitionScreenStreamState, validateScreenStreamFrame, validateScreenStreamOwnership } from "./realtime.js";
 import { prisma } from "./prisma.js";
 import { requestRemoteOperation, startRemoteSession } from "./services/pairing.js";
 
@@ -71,6 +71,27 @@ describe("screen stream security and lifecycle", () => {
     }
     await expect(cleanupScreenStream("stream-invalid", "Protocol violation")).resolves.toBeUndefined();
     await expect(cleanupScreenStream("stream-invalid", "Protocol violation")).resolves.toBeUndefined();
+  });
+
+  it("rebuilds a full frame payload from ordered chunks and cleans up a stopped stream", async () => {
+    const original = Buffer.from("Hello continuous stream world");
+    const encoded = original.toString("base64");
+    const chunked = new Map([
+      [0, encoded.slice(0, 12)],
+      [1, encoded.slice(12, 24)],
+      [2, encoded.slice(24)],
+    ]);
+    expect(reconstructScreenStreamPayload({ totalChunks: 3, chunks: chunked, totalBytes: original.length })).toBe(encoded);
+
+    const stream = createScreenStreamState({ streamId: "stream-rebuild", userId: "user-a", pairedDeviceId: "device-a", sessionId: "session-a", operationId: "op-rebuild" });
+    stream.status = "STREAMING";
+    expect(getActiveScreenStreamForSession("device-a", "session-a")).toBeUndefined();
+
+    registerScreenStreamState({ streamId: "stream-rebuild", userId: "user-a", pairedDeviceId: "device-a", sessionId: "session-a", operationId: "op-rebuild" });
+    expect(getActiveScreenStreamForSession("device-a", "session-a")?.streamId).toBe("stream-rebuild");
+
+    await expect(cleanupScreenStream("stream-rebuild", "Stream stopped by client")).resolves.toBeUndefined();
+    expect(getActiveScreenStreamForSession("device-a", "session-a")).toBeUndefined();
   });
 });
 

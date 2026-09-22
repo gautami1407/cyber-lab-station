@@ -38,7 +38,7 @@ describe.skipIf(!enabled)("agent pairing and system information integration", ()
     baseUrl = `ws://127.0.0.1:${address.port}`;
     httpAgent = request.agent(server);
     csrf = (await httpAgent.get("/api/csrf")).body.data.csrfToken as string;
-    const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const suffix = `${Date.now()}${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
     const registered = await httpAgent.post("/api/auth/register").set("X-CSRF-Token", csrf).send({
       username: `agenttest${suffix}`,
       email: `agenttest${suffix}@example.test`,
@@ -93,9 +93,15 @@ describe.skipIf(!enabled)("agent pairing and system information integration", ()
     const system = { platform: process.platform, hostname: "integration-agent", cpus: 1, memoryBytes: 1024, uptimeSeconds: 1, interfaces: {} };
     socket.send(JSON.stringify({ type: "REMOTE_RESULT", operationId, status: "COMPLETED", data: system }));
     expect((await operationPromise).status).toBe(202);
-    await delay(100);
-    const operation = await prisma.remoteOperation.findUnique({ where: { id: operationId } });
-    expect(operation?.status).toBe("COMPLETED");
+    // Bounded polling: check DB every 75ms until status leaves QUEUED (max 2s).
+    // This avoids the race where the WS handler's DB write hasn't committed yet.
+    const pollDeadline = Date.now() + 2000;
+    let operation = await prisma.remoteOperation.findUnique({ where: { id: operationId } });
+    while (operation?.status === "QUEUED" && Date.now() < pollDeadline) {
+      await delay(75);
+      operation = await prisma.remoteOperation.findUnique({ where: { id: operationId } });
+    }
+    expect(operation?.status, `operation ${operationId} should reach COMPLETED within 2s (got: ${operation?.status})`).toBe("COMPLETED");
     expect(await prisma.auditLog.count({ where: { userId, action: "REMOTE_OPERATION_REQUESTED" } })).toBeGreaterThan(0);
 
     const endedResponse = await httpAgent.post(`/api/remote/session/${sessionId}/end`).set("X-CSRF-Token", csrf).send();

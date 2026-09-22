@@ -16,6 +16,7 @@ import networkRoutes from "./routes/network.js";
 import diagnosticsRoutes from "./routes/diagnostics.js";
 import monitoringRoutes from "./routes/monitoring.js";
 import pairingRoutes from "./routes/pairing.js";
+import auditRoutes from "./routes/audit.js";
 
 async function checkDatabaseConnection() {
   if (!config.databaseUrl) return false;
@@ -106,6 +107,7 @@ export function createApp() {
   app.use("/api", diagnosticsRoutes);
   app.use("/api", monitoringRoutes);
   app.use("/api", pairingRoutes);
+  app.use("/api", auditRoutes);
 
   app.use(errorHandler);
   return app;

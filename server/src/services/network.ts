@@ -7,6 +7,7 @@ import { tcpConnect } from "../lib/tcp.js";
 import { config } from "../config.js";
 import { prisma } from "../prisma.js";
 import { audit } from "./audit.js";
+import { resolveDeviceVendor } from "./vendor.js";
 
 type LocalInterface = {
   name: string;
@@ -166,10 +167,11 @@ export async function discoverDevices(userId: string, networkId: string, ip: str
     seen.add(observation.ipAddress);
     const hostname = await hostnameFor(observation.ipAddress);
     const macAddress = observation.ipAddress === local.ipv4Address ? local.macAddress : null;
+    const { vendor } = resolveDeviceVendor(macAddress);
     const device = await prisma.device.upsert({
       where: { userId_ipAddress: { userId, ipAddress: observation.ipAddress } },
-      update: { authorizedNetworkId: network.id, macAddress, hostname, status: "ONLINE", lastSeen: now, latencyMs: observation.latencyMs },
-      create: { userId, authorizedNetworkId: network.id, ipAddress: observation.ipAddress, macAddress, hostname, status: "ONLINE", latencyMs: observation.latencyMs },
+      update: { authorizedNetworkId: network.id, macAddress, hostname, vendor, status: "ONLINE", lastSeen: now, latencyMs: observation.latencyMs },
+      create: { userId, authorizedNetworkId: network.id, ipAddress: observation.ipAddress, macAddress, hostname, vendor, status: "ONLINE", latencyMs: observation.latencyMs },
     });
     await prisma.deviceObservation.create({ data: { deviceId: device.id, status: "ONLINE", ipAddress: device.ipAddress, macAddress, hostname, latencyMs: observation.latencyMs } });
     devices.push(device);

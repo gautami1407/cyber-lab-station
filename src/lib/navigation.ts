@@ -11,6 +11,8 @@ import {
   ScanSearch,
   Settings,
   Shield,
+  ClipboardList,
+  Wrench,
 } from "lucide-react";
 
 export type AppPath =
@@ -26,6 +28,8 @@ export type AppPath =
   | "/projects/application-security"
   | "/projects/subdomain-enumeration"
   | "/activity"
+  | "/audit-logs"
+  | "/diagnostics"
   | "/documentation"
   | "/settings";
 
@@ -69,6 +73,14 @@ export const NAV_ITEMS: NavItem[] = [
     title: "Events & Alerts",
     description: "Review evidence-based events and manage security alerts.",
     icon: Activity,
+    group: "ops",
+  },
+  {
+    to: "/diagnostics",
+    label: "Diagnostics",
+    title: "Network Diagnostics",
+    description: "Run allowlisted ping, DNS, latency, and traceroute checks.",
+    icon: Wrench,
     group: "ops",
   },
   {
@@ -125,6 +137,14 @@ export const NAV_ITEMS: NavItem[] = [
     title: "Security Activity",
     description: "Review recent security operations performed in this environment.",
     icon: Activity,
+    group: "ops",
+  },
+  {
+    to: "/audit-logs",
+    label: "Audit Logs",
+    title: "Audit Logs",
+    description: "Review persisted security actions and their actors.",
+    icon: ClipboardList,
     group: "ops",
   },
   {

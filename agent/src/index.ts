@@ -38,7 +38,7 @@ let socket: WebSocket | undefined;
 let state: ReturnType<typeof loadOrCreateIdentity> | undefined;
 let heartbeatTimer: NodeJS.Timeout | undefined;
 let screenCaptureInFlight = false;
-const activeStreams = new Map<string, { operationId: string; streamId: string; frameNumber: number; timer: NodeJS.Timeout; requestStop: boolean; active: boolean }>();
+const activeStreams = new Map<string, { operationId: string; streamId: string; frameNumber: number; timer: NodeJS.Timeout; requestStop: boolean; active: boolean; capturing: boolean }>();
 
 function safeSend(message: Record<string, unknown>) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
@@ -103,7 +103,6 @@ function startAgent() {
       } else if (message.operation === "SCREEN_CAPTURE") {
         void captureScreen(message.operationId);
       } else if (message.operation === "SCREEN_STREAM") {
-        console.info("[STREAM DEBUG] stream start received", { operationId: message.operationId, streamId: message.streamId });
         void startStream(message.operationId, message.streamId);
       } else if (message.operation === "SCREEN_STREAM_STOP") {
         stopStream(message.operationId, message.streamId);
@@ -113,11 +112,11 @@ function startAgent() {
     }
   });
 
-  socket.on("close", () => {
+  socket.on("close", (code, reason) => {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     for (const stream of activeStreams.values()) clearInterval(stream.timer);
     activeStreams.clear();
-    console.log("NetLink agent disconnected.");
+    console.error(`NetLink agent disconnected. code=${code} reason=${reason.toString() || "<none>"}`);
   });
   socket.on("error", (error) => console.error(`NetLink agent connection error: ${error.message}`));
 }
@@ -153,13 +152,14 @@ async function captureScreen(operationId: string) {
 
 async function captureStreamFrame(streamId: string, operationId: string) {
   const active = activeStreams.get(streamId);
-  if (!active || !active.active || !socket) return;
+  if (!active || !active.active || active.capturing || !socket) return;
+  active.capturing = true;
   try {
     const capture = await captureWindowsScreen();
-    const frameId = `${streamId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const frameId = `${streamId}-${randomUUID()}`;
     const chunkPlan = getStreamFrameMetadata(capture.bytes, streamChunkBytes);
+    console.log(`Stream frame ${frameId}: bytes=${chunkPlan.totalBytes} chunks=${chunkPlan.totalChunks} chunkSize=${chunkPlan.chunkSize}`);
     const startEvent = { type: "SCREEN_STREAM_FRAME_START", operationId, streamId, frameId, totalChunks: chunkPlan.totalChunks, width: capture.width, height: capture.height, mimeType: "image/png", totalBytes: chunkPlan.totalBytes };
-    console.info("[STREAM DEBUG] frame start sent", { streamId, frameId, totalChunks: chunkPlan.totalChunks, totalBytes: chunkPlan.totalBytes });
     if (!safeSend(startEvent)) {
       stopStream(operationId, streamId);
       return;
@@ -167,14 +167,12 @@ async function captureStreamFrame(streamId: string, operationId: string) {
     for (let chunkIndex = 0; chunkIndex < chunkPlan.totalChunks; chunkIndex += 1) {
       const chunk = chunkPlan.payload.slice(chunkIndex * (chunkPlan.chunkSize ?? streamChunkBytes), Math.min(chunkPlan.payload.length, (chunkIndex + 1) * (chunkPlan.chunkSize ?? streamChunkBytes)));
       const chunkMessage = { type: "SCREEN_STREAM_CHUNK", operationId, streamId, frameId, chunkIndex, totalChunks: chunkPlan.totalChunks, payload: chunk };
-      console.info("[STREAM DEBUG] chunk sent", { streamId, frameId, chunkIndex, totalChunks: chunkPlan.totalChunks });
       if (!safeSend(chunkMessage)) {
         stopStream(operationId, streamId);
         return;
       }
     }
     const endMessage = { type: "SCREEN_STREAM_FRAME_END", operationId, streamId, frameId, totalChunks: chunkPlan.totalChunks };
-    console.info("[STREAM DEBUG] frame end sent", { streamId, frameId, totalChunks: chunkPlan.totalChunks });
     if (!safeSend(endMessage)) {
       stopStream(operationId, streamId);
       return;
@@ -182,8 +180,11 @@ async function captureStreamFrame(streamId: string, operationId: string) {
     const current = activeStreams.get(streamId);
     if (current && current.active) current.frameNumber += 1;
   } catch (error) {
-    socket.send(JSON.stringify({ type: "REMOTE_RESULT", operationId, status: "FAILED", reason: error instanceof Error ? error.message : "Stream frame failed." }));
+    safeSend({ type: "REMOTE_RESULT", operationId, status: "FAILED", reason: error instanceof Error ? error.message : "Stream frame failed." });
     stopStream(operationId, streamId);
+  } finally {
+    const current = activeStreams.get(streamId);
+    if (current) current.capturing = false;
   }
 }
 
@@ -198,12 +199,11 @@ async function startStream(operationId: string, requestedStreamId?: string) {
     }
   }
   const metadata = { width: 0, height: 0, mimeType: "image/png", fps: streamFps, streamId };
-  console.info("[STREAM DEBUG] capture loop started", { operationId, streamId });
   const timer = setInterval(() => {
     const current = activeStreams.get(streamId);
     if (current && current.active && current.operationId === operationId) void captureStreamFrame(streamId, operationId);
   }, Math.max(1000 / streamFps, 200));
-  activeStreams.set(streamId, { operationId, streamId, frameNumber: 0, timer, requestStop: false, active: true });
+  activeStreams.set(streamId, { operationId, streamId, frameNumber: 0, timer, requestStop: false, active: true, capturing: false });
   socket.send(JSON.stringify({ type: "SCREEN_STREAM_START", operationId, streamId, metadata }));
   await captureStreamFrame(streamId, operationId);
 }

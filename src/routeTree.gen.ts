@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppActivityRouteImport } from './routes/_app/activity'
+import { Route as AppAuditLogsRouteImport } from './routes/_app/audit-logs'
 import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
+import { Route as AppDiagnosticsRouteImport } from './routes/_app/diagnostics'
 import { Route as AppDocumentationRouteImport } from './routes/_app/documentation'
 import { Route as AppMonitoringRouteImport } from './routes/_app/monitoring'
 import { Route as AppNetworksRouteImport } from './routes/_app/networks'
@@ -40,9 +42,19 @@ const AppActivityRoute = AppActivityRouteImport.update({
   path: '/activity',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAuditLogsRoute = AppAuditLogsRouteImport.update({
+  id: '/audit-logs',
+  path: '/audit-logs',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppDashboardRoute = AppDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDiagnosticsRoute = AppDiagnosticsRouteImport.update({
+  id: '/diagnostics',
+  path: '/diagnostics',
   getParentRoute: () => AppRoute,
 } as any)
 const AppDocumentationRoute = AppDocumentationRouteImport.update({
@@ -113,7 +125,9 @@ const AppProjectsSubdomainEnumerationRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/activity': typeof AppActivityRoute
+  '/audit-logs': typeof AppAuditLogsRoute
   '/dashboard': typeof AppDashboardRoute
+  '/diagnostics': typeof AppDiagnosticsRoute
   '/documentation': typeof AppDocumentationRoute
   '/monitoring': typeof AppMonitoringRoute
   '/networks': typeof AppNetworksRoute
@@ -130,7 +144,9 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/activity': typeof AppActivityRoute
+  '/audit-logs': typeof AppAuditLogsRoute
   '/dashboard': typeof AppDashboardRoute
+  '/diagnostics': typeof AppDiagnosticsRoute
   '/documentation': typeof AppDocumentationRoute
   '/monitoring': typeof AppMonitoringRoute
   '/networks': typeof AppNetworksRoute
@@ -149,7 +165,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/_app/activity': typeof AppActivityRoute
+  '/_app/audit-logs': typeof AppAuditLogsRoute
   '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/diagnostics': typeof AppDiagnosticsRoute
   '/_app/documentation': typeof AppDocumentationRoute
   '/_app/monitoring': typeof AppMonitoringRoute
   '/_app/networks': typeof AppNetworksRoute
@@ -168,7 +186,9 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/activity'
+    | '/audit-logs'
     | '/dashboard'
+    | '/diagnostics'
     | '/documentation'
     | '/monitoring'
     | '/networks'
@@ -185,7 +205,9 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/activity'
+    | '/audit-logs'
     | '/dashboard'
+    | '/diagnostics'
     | '/documentation'
     | '/monitoring'
     | '/networks'
@@ -203,7 +225,9 @@ export interface FileRouteTypes {
     | '/'
     | '/_app'
     | '/_app/activity'
+    | '/_app/audit-logs'
     | '/_app/dashboard'
+    | '/_app/diagnostics'
     | '/_app/documentation'
     | '/_app/monitoring'
     | '/_app/networks'
@@ -246,11 +270,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppActivityRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/audit-logs': {
+      id: '/_app/audit-logs'
+      path: '/audit-logs'
+      fullPath: '/audit-logs'
+      preLoaderRoute: typeof AppAuditLogsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/dashboard': {
       id: '/_app/dashboard'
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof AppDashboardRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/diagnostics': {
+      id: '/_app/diagnostics'
+      path: '/diagnostics'
+      fullPath: '/diagnostics'
+      preLoaderRoute: typeof AppDiagnosticsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/documentation': {
@@ -342,7 +380,9 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppActivityRoute: typeof AppActivityRoute
+  AppAuditLogsRoute: typeof AppAuditLogsRoute
   AppDashboardRoute: typeof AppDashboardRoute
+  AppDiagnosticsRoute: typeof AppDiagnosticsRoute
   AppDocumentationRoute: typeof AppDocumentationRoute
   AppMonitoringRoute: typeof AppMonitoringRoute
   AppNetworksRoute: typeof AppNetworksRoute
@@ -359,7 +399,9 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppActivityRoute: AppActivityRoute,
+  AppAuditLogsRoute: AppAuditLogsRoute,
   AppDashboardRoute: AppDashboardRoute,
+  AppDiagnosticsRoute: AppDiagnosticsRoute,
   AppDocumentationRoute: AppDocumentationRoute,
   AppMonitoringRoute: AppMonitoringRoute,
   AppNetworksRoute: AppNetworksRoute,

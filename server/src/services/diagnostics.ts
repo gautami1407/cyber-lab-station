@@ -50,7 +50,12 @@ export async function dnsResolve(userId: string, target: string) {
     }
     return { query: target, addresses: [target], hostnames };
   }
-  const result = await lookup(target, { all: true, verbatim: true });
+  let result: Array<{ address: string; family: number }>;
+  try {
+    result = await lookup(target, { all: true, verbatim: true });
+  } catch {
+    throw Errors.validation("The diagnostic target could not be resolved.");
+  }
   const addresses = result.map((item) => item.address).filter((address) => net.isIPv4(address));
   for (const address of addresses) await authorizedNetwork(userId, address);
   return { query: target, addresses, hostnames: [] };

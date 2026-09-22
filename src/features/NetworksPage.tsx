@@ -6,6 +6,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/common/States
 import { PageHeader } from "@/components/common/PageHeader";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { formatDateTime } from "@/lib/format";
 import { networkService, type AuthorizedNetwork, type Device, type LocalInterface } from "@/services/networkService";
 
 export function NetworksPage() {
@@ -109,7 +110,7 @@ export function NetworksPage() {
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Observed devices</h2>
-        {devices.length === 0 ? <EmptyState title="No data available" description="Run discovery on an authorized network." /> : <div className="grid gap-3 md:grid-cols-2">{devices.map((device) => <div key={device.id} className="rounded-xl border border-border bg-card/70 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-medium">{device.hostname ?? "Unknown host"}</p><p className="font-mono text-xs text-muted-foreground">{device.ipAddress} · {device.macAddress ?? "MAC unknown"}</p></div><StatusBadge tone={device.status === "ONLINE" ? "success" : "accent"}>{device.status}</StatusBadge></div><p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><ShieldCheck aria-hidden="true" className="size-3" /> Risk {device.riskLevel}</p></div>)}</div>}
+        {devices.length === 0 ? <EmptyState title="No data available" description="Run discovery on an authorized network." /> : <div className="grid gap-3 md:grid-cols-2">{devices.map((device) => <div key={device.id} className="rounded-xl border border-border bg-card/70 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-medium">{device.hostname ?? "Unknown host"}</p><p className="font-mono text-xs text-muted-foreground">{device.ipAddress} · {device.macAddress ?? "MAC unknown"}</p><p className="mt-1 text-xs text-muted-foreground">{device.vendor ?? "Vendor unknown"}</p></div><StatusBadge tone={device.status === "ONLINE" ? "success" : "accent"}>{device.status}</StatusBadge></div><p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><ShieldCheck aria-hidden="true" className="size-3" /> Risk {device.riskLevel}</p><p className="mt-1 text-xs text-muted-foreground">Last seen {formatDateTime(device.lastSeen)}</p><p className="text-xs text-muted-foreground">{device.authorizedNetwork?.interfaceName ?? "Network unknown"} · {device.authorizedNetwork?.cidr ?? "No network"}</p></div>)}</div>}
       </section>
     </div>
   );

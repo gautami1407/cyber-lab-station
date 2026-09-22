@@ -78,7 +78,7 @@ export function registerScreenStreamState(input: { streamId: string; userId: str
 export function transitionScreenStreamState(stream: ScreenStreamRecord, nextStatus: string): ScreenStreamRecord {
   const allowedTransitions: Record<ScreenStreamStatus, ScreenStreamStatus[]> = {
     STARTING: ["STARTING", "STREAMING", "FAILED"],
-    STREAMING: ["STOPPING", "FAILED", "STOPPED"],
+    STREAMING: ["STREAMING", "STOPPING", "FAILED", "STOPPED"],
     STOPPING: ["STOPPED", "FAILED"],
     STOPPED: ["FAILED"],
     FAILED: ["FAILED"],
@@ -109,6 +109,20 @@ export function enforceScreenStreamBackpressure(stream: ScreenStreamRecord, fram
   if (queue.length > maxPending) {
     queue.splice(0, queue.length - maxPending);
   }
+}
+
+export function reconstructScreenStreamPayload(input: { totalChunks: number; chunks: Map<number, string> | Record<number, string>; totalBytes?: number }): string {
+  if (!Number.isInteger(input.totalChunks) || input.totalChunks < 1) return "";
+  const orderedChunks = Array.from({ length: input.totalChunks }, (_, index) => {
+    if (input.chunks instanceof Map) return input.chunks.get(index) ?? "";
+    return input.chunks[index] ?? "";
+  });
+  const payload = orderedChunks.join("");
+  if (input.totalBytes !== undefined && Number.isFinite(input.totalBytes) && input.totalBytes > 0) {
+    const decodedLength = Buffer.from(payload, "base64").length;
+    if (decodedLength > input.totalBytes) return payload.slice(0, Math.max(0, Math.floor((payload.length * input.totalBytes) / Math.max(decodedLength, 1))));
+  }
+  return payload;
 }
 
 export function getActiveScreenStreamForSession(pairedDeviceId: string, sessionId: string): ScreenStreamRecord | undefined {
@@ -225,7 +239,7 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           const paired = await prisma.pairedDevice.findFirst({ where: { id: pairedDeviceId, status: "PAIRED" } });
           if (!paired || paired.publicKey !== message.publicKey || !verify(null, Buffer.from(challenge), paired.publicKey, Buffer.from(message.signature, "base64"))) return client.close(1008, "Agent authentication failed");
           authenticated = true;
-          heartbeatTimes.set(pairedDeviceId, 0);
+          heartbeatTimes.set(pairedDeviceId, Date.now() - Math.max(1000, config.agentHeartbeatIntervalMs / 2));
           agents.set(pairedDeviceId, client);
           await prisma.pairedDevice.update({ where: { id: pairedDeviceId }, data: { connectionStatus: "CONNECTED", lastSeen: new Date() } });
           await audit({ userId: paired.userId, action: "AGENT_CONNECTED", success: true, target: pairedDeviceId });
@@ -295,7 +309,6 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           const operationId = String((message as { operationId?: string }).operationId ?? "");
           const streamId = String((message as { streamId?: string }).streamId ?? "");
           const metadata = (message as { metadata?: Record<string, unknown> }).metadata ?? {};
-          console.info("[STREAM DEBUG] stream start received from agent", { operationId, streamId, pairedDeviceId });
           const existing = await prisma.remoteOperation.findFirst({ where: { id: operationId, pairedDeviceId, operation: "SCREEN_STREAM", status: "QUEUED" }, include: { user: true } });
           if (!streamId || !existing) return client.close(1008, "Invalid screen stream");
           const current = screenStreams.get(streamId) ?? createScreenStreamState({ streamId, userId: existing.userId, pairedDeviceId, sessionId: String((message as { sessionId?: string }).sessionId ?? ""), operationId });
@@ -307,7 +320,6 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           screenStreams.set(streamId, current);
           transitionScreenStreamState(current, "STARTING");
           await audit({ userId: existing.userId, action: "SCREEN_STREAM_STARTED", success: true, target: operationId, metadata: { streamId, ...metadata } }).catch(() => undefined);
-          console.info("[STREAM DEBUG] stream start forwarded to browser", { operationId, streamId });
           publishUserEvent(existing.userId, "SCREEN_STREAM_START", { operationId, streamId, metadata });
           return;
         }
@@ -333,7 +345,6 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           stream.currentChunkIndex = 0;
           stream.lastFrameAt = Date.now();
           transitionScreenStreamState(stream, "STREAMING");
-          console.info("[STREAM DEBUG] frame start received from agent", { streamId, frameId, totalChunks });
           publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME_START", { streamId: frame.streamId, operationId: frame.operationId, frameId, totalChunks, width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes });
           return;
         }
@@ -358,7 +369,6 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           stream.lastChunkAt = Date.now();
           stream.currentChunkIndex = chunkIndex + 1;
           if (frame.chunks.size === frame.totalChunks) frame.isComplete = true;
-          console.info("[STREAM DEBUG] chunk received from agent", { streamId, frameId, chunkIndex, totalChunks });
           publishUserEvent(stream.userId, "SCREEN_STREAM_CHUNK", { streamId: frame.streamId, operationId: frame.operationId, frameId, chunkIndex, totalChunks, payload });
           return;
         }
@@ -372,11 +382,9 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           if (!frame.isComplete || frame.receivedBytes !== frame.totalBytes) return client.close(1008, "Incomplete stream frame");
           stream.framesCaptured += 1;
           stream.framesDelivered += 1;
-          stream.pendingFrames.push({ frameId, createdAt: Date.now(), width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, payload: Array.from({ length: frame.totalChunks }, (_, chunkIndex) => frame.chunks.get(chunkIndex) ?? "").join("") });
-          enforceScreenStreamBackpressure(stream, { frameId, createdAt: Date.now(), width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, payload: Array.from({ length: frame.totalChunks }, (_, chunkIndex) => frame.chunks.get(chunkIndex) ?? "").join("") });
-          const payload = Array.from({ length: frame.totalChunks }, (_, chunkIndex) => frame.chunks.get(chunkIndex) ?? "").join("");
-          console.info("[STREAM DEBUG] frame end received from agent", { streamId, frameId, totalChunks: frame.totalChunks });
-          console.info("[STREAM DEBUG] frame forwarded to browser", { streamId, frameId, totalChunks: frame.totalChunks });
+          const payload = reconstructScreenStreamPayload({ totalChunks: frame.totalChunks, chunks: frame.chunks, totalBytes: frame.totalBytes });
+          stream.pendingFrames.push({ frameId, createdAt: Date.now(), width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, payload });
+          enforceScreenStreamBackpressure(stream, { frameId, createdAt: Date.now(), width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, payload });
           publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME_START", { streamId: frame.streamId, operationId: frame.operationId, frameId, totalChunks: frame.totalChunks, width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes });
           publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME", { streamId: frame.streamId, operationId: frame.operationId, frameId, width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, data: payload });
           publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME_END", { streamId: frame.streamId, operationId: frame.operationId, frameId, totalChunks: frame.totalChunks });
@@ -405,9 +413,13 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
         const operation = await prisma.remoteOperation.findFirst({ where: { id: message.operationId, pairedDeviceId } });
         if (!operation) return client.close(1008, "Operation is not owned by this agent");
         await prisma.remoteOperation.update({ where: { id: operation.id }, data: { status, reason: message.reason ?? null, resultJson: message.data as never } });
-      } catch { client.close(1008, "Invalid agent payload"); }
+      } catch (error) {
+        console.error(`Agent payload handling failed. pairedDeviceId=${pairedDeviceId}`, error);
+        client.close(1008, "Invalid agent payload");
+      }
     });
-    client.on("close", () => {
+    client.on("close", (code, reason) => {
+      console.warn(`Agent socket closed. pairedDeviceId=${pairedDeviceId} code=${code} reason=${reason.toString() || "<none>"}`);
       if (agents.get(pairedDeviceId) === client) agents.delete(pairedDeviceId);
       heartbeatTimes.delete(pairedDeviceId);
       void cleanupAgent(pairedDeviceId, "Agent disconnected").catch(() => undefined);

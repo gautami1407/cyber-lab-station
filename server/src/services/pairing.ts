@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Errors } from "../errors.js";
 import { prisma } from "../prisma.js";
 import { audit } from "./audit.js";
@@ -73,19 +74,17 @@ export async function requestRemoteOperation(userId: string, pairedDeviceId: str
   let streamId: string | undefined;
   if (operation === "SCREEN_STREAM") {
     streamId = registerScreenStreamState({
-      streamId: "stream-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      streamId: `stream-${randomUUID()}`,
       userId,
       pairedDeviceId,
       sessionId: sessionId ?? "",
       operationId: result.id,
     }).streamId;
-    console.info("[STREAM DEBUG] stream registered", { streamId, operationId: result.id, pairedDeviceId, sessionId });
   } else if (operation === "SCREEN_STREAM_STOP") {
     streamId = getActiveScreenStreamForSession(pairedDeviceId, sessionId ?? "")?.streamId;
   }
 
   if (!sendAgentOperation(pairedDeviceId, result.id, sessionId ?? "", operation, streamId)) {
-    console.warn("[STREAM DEBUG] stream start sent to agent failed", { operationId: result.id, pairedDeviceId, streamId });
     if (streamId) await cleanupScreenStream(streamId, "No authenticated NetLink agent is connected.", userId).catch(() => undefined);
     const rejected = await prisma.remoteOperation.update({ where: { id: result.id }, data: { status: "REJECTED", reason: "No authenticated NetLink agent is connected." } });
     await audit({ userId, action: "REMOTE_OPERATION_REJECTED", success: false, target: rejected.id, ip, metadata: { operation } });

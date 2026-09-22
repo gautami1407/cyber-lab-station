@@ -14,10 +14,6 @@ export function connectRealtime(onEvent: (event: RealtimeEvent) => void) {
     socket.onmessage = (message) => {
       try {
         const event = JSON.parse(message.data as string) as RealtimeEvent;
-        if (event.type === "SCREEN_STREAM_START") console.info("[STREAM DEBUG] browser start received");
-        if (event.type === "SCREEN_STREAM_FRAME_START") console.info("[STREAM DEBUG] frame start received");
-        if (event.type === "SCREEN_STREAM_CHUNK") console.info("[STREAM DEBUG] chunk received");
-        if (event.type === "SCREEN_STREAM_FRAME_END") console.info("[STREAM DEBUG] frame end received");
         onEvent(event);
       } catch { /* Ignore malformed server events. */ }
     };

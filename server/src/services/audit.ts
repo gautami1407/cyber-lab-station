@@ -22,6 +22,15 @@ export async function audit(params: {
   });
 }
 
+export async function listAuditLogs(userId: string) {
+  return prisma.auditLog.findMany({
+    where: { userId },
+    include: { user: { select: { id: true, username: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+}
+
 export function clientIp(req: { ip?: string; headers: Record<string, unknown> }): string {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.length > 0) return forwarded.split(",")[0]!.trim();

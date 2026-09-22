@@ -22,11 +22,13 @@ export type Device = {
   id: string;
   ipAddress: string;
   macAddress: string | null;
+  vendor: string | null;
   hostname: string | null;
   status: string;
   riskLevel: string;
   latencyMs: number | null;
   lastSeen: string;
+  authorizedNetwork?: { id: string; interfaceName: string; cidr: string } | null;
 };
 
 export type DeviceDetail = Device & {
@@ -43,7 +45,7 @@ export const networkService = {
     return request<AuthorizedNetwork[]>("/networks");
   },
   authorize(payload: Pick<LocalInterface, "name" | "ipv4Address" | "cidr">) {
-    return request<AuthorizedNetwork>("/networks/authorize", { method: "POST", body: { interfaceName: payload.name, ...payload } });
+    return request<AuthorizedNetwork>("/networks/authorize", { method: "POST", body: { interfaceName: payload.name, ipv4Address: payload.ipv4Address, cidr: payload.cidr } });
   },
   revoke(id: string) {
     return request<AuthorizedNetwork>(`/networks/${id}`, { method: "DELETE" });
@@ -56,5 +58,8 @@ export const networkService = {
   },
   device(id: string) {
     return request<DeviceDetail>(`/devices/${id}`);
+  },
+  scanServices(id: string) {
+    return request<{ operationId: string; scanId: string }>(`/devices/${id}/services/scan`, { method: "POST", body: { startPort: 1, endPort: 1024, profile: "common" } });
   },
 };

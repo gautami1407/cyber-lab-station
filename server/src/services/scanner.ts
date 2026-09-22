@@ -6,6 +6,7 @@ import { expandIpv4Range, parseCidr } from "../lib/ipv4.js";
 import { COMMON_PORTS, WEB_PORTS, conservativeServiceName, tcpConnect } from "../lib/tcp.js";
 import { audit } from "./audit.js";
 import { prisma } from "../prisma.js";
+import { calculateRisk } from "./risk.js";
 import {
   createOperation,
   finishOperation,
@@ -153,6 +154,9 @@ async function runPortScan(
     };
     const finished = await finishOperation(operationId, "completed", payload as Prisma.InputJsonValue);
     if (scanId && deviceId) {
+      const openServiceCount = results.filter((result) => result.status === "open").length;
+      const risk = calculateRisk({ newServices: openServiceCount });
+
       await prisma.scanResult.createMany({
         data: results.map((result) => ({ scanId, port: result.port, protocol: result.protocol, status: result.status, serviceName: result.service, responseTimeMs: result.responseTimeMs })),
       });
@@ -164,6 +168,7 @@ async function runPortScan(
         });
         await prisma.serviceObservation.create({ data: { serviceId: service.id, scanId, status: result.status.toUpperCase(), responseTimeMs: result.responseTimeMs } });
       }
+      await prisma.device.update({ where: { id: deviceId }, data: { riskLevel: risk.level, lastSeen: new Date() } });
       await prisma.scan.update({ where: { id: scanId }, data: { status: "COMPLETED", completedAt: new Date() } });
     }
     payload.durationMs = finished.durationMs ?? 0;

@@ -52,7 +52,7 @@ describe.skipIf(!enabled || !supported)("native screen capture integration", () 
     const normalizedPublicKey = String(keys.publicKey).trim().replace(/\r\n/g, "\n");
     const agentId = createHash("sha256").update(Buffer.from(normalizedPublicKey, "utf8")).digest("hex").slice(0, 24);
     writeFileSync(statePath, JSON.stringify({ agentId, publicKey: normalizedPublicKey, privateKey: String(keys.privateKey).trim() }));
-    const pairing = await httpAgent.post("/api/pairing/request").set("X-CSRF-Token", csrf).send({ deviceName: "Native screen agent", publicKey: keys.publicKey });
+    const pairing = await httpAgent.post("/api/pairing/request").set("X-CSRF-Token", csrf).send({ deviceName: "Native screen agent", publicKey: normalizedPublicKey });
     const approved = await httpAgent.post(`/api/pairing/${pairing.body.data.id}/approve`).set("X-CSRF-Token", csrf).send();
     const pairedDeviceId = approved.body.data.paired.id as string;
     const session = await httpAgent.post("/api/remote/session").set("X-CSRF-Token", csrf).send({ pairedDeviceId });
