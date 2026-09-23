@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { config } from "../config.js";
 import { Errors } from "../errors.js";
 import { assertIpInAllowlist, assertScanTargetAllowed } from "../lib/allowlist.js";
-import { expandIpv4Range, parseCidr } from "../lib/ipv4.js";
+import { expandIpv4Range, ipv4ToInt, parseCidr } from "../lib/ipv4.js";
 import { COMMON_PORTS, WEB_PORTS, conservativeServiceName, tcpConnect } from "../lib/tcp.js";
 import { audit } from "./audit.js";
 import { prisma } from "../prisma.js";
@@ -43,6 +43,25 @@ async function poolMap<T, R>(items: T[], limit: number, fn: (item: T, index: num
   return results;
 }
 
+/**
+ * Verifies that the resolved target IP is inside at least one AuthorizedNetwork
+ * owned by the requesting user. Authorization is personal: another user's
+ * authorization (or the global ALLOWED_SCAN_TARGETS allowlist) is never enough.
+ */
+async function assertTargetAuthorizedForUser(userId: string, targetIp: string) {
+  const value = ipv4ToInt(targetIp);
+  if (value == null) throw Errors.validation("Invalid target IP.");
+  const networks = await prisma.authorizedNetwork.findMany({
+    where: { userId, status: "AUTHORIZED" },
+    select: { cidr: true },
+  });
+  const covered = networks.some((network) => {
+    const range = parseCidr(network.cidr);
+    return range != null && value >= range.start && value <= range.end;
+  });
+  if (!covered) throw Errors.targetUnauthorized();
+}
+
 export async function startPortScan(params: {
   userId: string;
   ip: string;
@@ -54,7 +73,19 @@ export async function startPortScan(params: {
 }) {
   if (!params.authorized) throw Errors.confirmation();
   const resolved = await assertScanTargetAllowed(params.target, config.allowedScanTargets);
+  await assertTargetAuthorizedForUser(params.userId, resolved.ip);
   const ports = mapPorts(params.profile, params.startPort, params.endPort);
+  // When the target is a device the user already owns, persist Scan / ScanResult
+  // / Service observations and update the device risk once the scan completes.
+  const device = await prisma.device.findFirst({
+    where: { userId: params.userId, ipAddress: resolved.ip },
+    select: { id: true },
+  });
+  const scan = device
+    ? await prisma.scan.create({
+        data: { userId: params.userId, deviceId: device.id, target: resolved.ip, status: "QUEUED" },
+      })
+    : null;
   const op = await createOperation({
     userId: params.userId,
     type: "PORT_SCAN",
@@ -70,8 +101,8 @@ export async function startPortScan(params: {
     target: resolved.host,
     ip: params.ip,
   });
-  void runPortScan(op.id, resolved.ip, ports, params.userId, params.ip, resolved.host);
-  return { operationId: op.id };
+  void runPortScan(op.id, resolved.ip, ports, params.userId, params.ip, resolved.host, scan?.id, device?.id);
+  return scan ? { operationId: op.id, scanId: scan.id } : { operationId: op.id };
 }
 
 export async function startDeviceServiceScan(params: {

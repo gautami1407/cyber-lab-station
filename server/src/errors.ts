@@ -14,6 +14,8 @@ export const Errors = {
   forbidden: () => new AppError(403, "FORBIDDEN", "You do not have permission to perform this action."),
   targetForbidden: () =>
     new AppError(403, "TARGET_NOT_ALLOWED", "The requested target is outside the configured lab allowlist."),
+  targetUnauthorized: () =>
+    new AppError(403, "TARGET_UNAUTHORIZED", "The requested target is not in a network you have authorized."),
   domainForbidden: () =>
     new AppError(403, "DOMAIN_NOT_ALLOWED", "The requested domain is outside the configured lab allowlist."),
   validation: (message = "Invalid request.") => new AppError(400, "VALIDATION_ERROR", message),

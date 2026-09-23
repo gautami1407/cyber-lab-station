@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Network, Radar, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AlertBanner } from "@/components/common/AlertBanner";
@@ -6,10 +7,13 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/common/States
 import { PageHeader } from "@/components/common/PageHeader";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
 import { formatDateTime } from "@/lib/format";
+import { ApiError } from "@/services/apiClient";
 import { networkService, type AuthorizedNetwork, type Device, type LocalInterface } from "@/services/networkService";
 
 export function NetworksPage() {
+  const { user, loading: authLoading } = useAuth();
   const [interfaces, setInterfaces] = useState<LocalInterface[]>([]);
   const [networks, setNetworks] = useState<AuthorizedNetwork[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -30,15 +34,26 @@ export function NetworksPage() {
       setNetworks(nextNetworks);
       setDevices(nextDevices);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Network data is unavailable.");
+      // Check if this is an authentication error
+      if (cause instanceof ApiError && cause.status === 401) {
+        setError("UNAUTHENTICATED");
+      } else {
+        setError(cause instanceof Error ? cause.message : "Network data is unavailable.");
+      }
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    void load();
-  }, []);
+    // Only load data if authenticated
+    if (!authLoading && user) {
+      void load();
+    } else if (!authLoading && !user) {
+      setLoading(false);
+      setError("UNAUTHENTICATED");
+    }
+  }, [user, authLoading]);
 
   async function authorize(item: LocalInterface) {
     setBusy(item.cidr);
@@ -85,33 +100,54 @@ export function NetworksPage() {
       <AlertBanner variant="warning" title="Explicit authorization required">
         The API re-checks the selected interface server-side. Remote devices are never fabricated when the operating system cannot observe them.
       </AlertBanner>
-      {loading ? <LoadingState label="Reading local interfaces and inventory..." /> : null}
-      {error ? <ErrorState message={error} /> : null}
-
-      <section className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">Local interfaces</h2>
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}><RefreshCw aria-hidden="true" /> Refresh</Button>
+      
+      {/* Show authentication required message */}
+      {error === "UNAUTHENTICATED" ? (
+        <div className="rounded-xl border border-border bg-card/50 p-6 text-center">
+          <h3 className="text-lg font-semibold">Authentication Required</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            You must be signed in to authorize networks and discover devices.
+          </p>
+          <p className="mt-4">
+            <Link
+              to="/projects/authentication"
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Go to Register / Login
+            </Link>
+          </p>
         </div>
-        {interfaces.length === 0 ? <EmptyState title="No IPv4 interfaces available" description="The host did not expose an IPv4 interface to the API." /> : (
-          <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card/70">
-            {interfaces.map((item) => {
-              const alreadyAuthorized = networks.some((network) => network.interfaceName === item.name && network.ipv4Address === item.ipv4Address && network.status === "AUTHORIZED");
-              return <div key={`${item.name}-${item.ipv4Address}`} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"><div><p className="font-medium">{item.name} <span className="font-mono text-xs text-muted-foreground">{item.cidr}</span></p><p className="text-xs text-muted-foreground">{item.ipv4Address} · {item.macAddress ?? "MAC unknown"}</p></div><Button size="sm" onClick={() => void authorize(item)} disabled={alreadyAuthorized || busy === item.cidr}>{alreadyAuthorized ? "Authorized" : "Authorize network"}</Button></div>;
-            })}
-          </div>
-        )}
-      </section>
+      ) : (
+        <>
+          {loading ? <LoadingState label="Reading local interfaces and inventory..." /> : null}
+          {error && error !== "UNAUTHENTICATED" ? <ErrorState message={error} /> : null}
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Authorized networks</h2>
-        {networks.length === 0 ? <EmptyState title="No authorized networks" description="Choose an interface above to enable network discovery." /> : networks.map((network) => <div key={network.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card/70 p-4"><div><p className="font-medium">{network.cidr}</p><p className="text-xs text-muted-foreground">{network.interfaceName} · {network._count.devices} observed device(s)</p></div><div className="flex gap-2"><Button size="sm" onClick={() => void discover(network.id)} disabled={busy === network.id}><Radar aria-hidden="true" /> Discover</Button><Button variant="ghost" size="icon" aria-label="Revoke network authorization" onClick={() => void revoke(network.id)} disabled={busy === network.id}><Trash2 aria-hidden="true" /></Button></div></div>)}
-      </section>
+          <section className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold">Local interfaces</h2>
+              <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}><RefreshCw aria-hidden="true" /> Refresh</Button>
+            </div>
+            {interfaces.length === 0 ? <EmptyState title="No IPv4 interfaces available" description="The host did not expose an IPv4 interface to the API." /> : (
+              <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card/70">
+                {interfaces.map((item) => {
+                  const alreadyAuthorized = networks.some((network) => network.interfaceName === item.name && network.ipv4Address === item.ipv4Address && network.status === "AUTHORIZED");
+                  return <div key={`${item.name}-${item.ipv4Address}`} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"><div><p className="font-medium">{item.name} <span className="font-mono text-xs text-muted-foreground">{item.cidr}</span></p><p className="text-xs text-muted-foreground">{item.ipv4Address} · {item.macAddress ?? "MAC unknown"}</p></div><Button size="sm" onClick={() => void authorize(item)} disabled={alreadyAuthorized || busy === item.cidr}>{alreadyAuthorized ? "Authorized" : "Authorize network"}</Button></div>;
+                })}
+              </div>
+            )}
+          </section>
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Observed devices</h2>
-        {devices.length === 0 ? <EmptyState title="No data available" description="Run discovery on an authorized network." /> : <div className="grid gap-3 md:grid-cols-2">{devices.map((device) => <div key={device.id} className="rounded-xl border border-border bg-card/70 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-medium">{device.hostname ?? "Unknown host"}</p><p className="font-mono text-xs text-muted-foreground">{device.ipAddress} · {device.macAddress ?? "MAC unknown"}</p><p className="mt-1 text-xs text-muted-foreground">{device.vendor ?? "Vendor unknown"}</p></div><StatusBadge tone={device.status === "ONLINE" ? "success" : "accent"}>{device.status}</StatusBadge></div><p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><ShieldCheck aria-hidden="true" className="size-3" /> Risk {device.riskLevel}</p><p className="mt-1 text-xs text-muted-foreground">Last seen {formatDateTime(device.lastSeen)}</p><p className="text-xs text-muted-foreground">{device.authorizedNetwork?.interfaceName ?? "Network unknown"} · {device.authorizedNetwork?.cidr ?? "No network"}</p></div>)}</div>}
-      </section>
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Authorized networks</h2>
+            {networks.length === 0 ? <EmptyState title="No authorized networks" description="Choose an interface above to enable network discovery." /> : networks.map((network) => <div key={network.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card/70 p-4"><div><p className="font-medium">{network.cidr}</p><p className="text-xs text-muted-foreground">{network.interfaceName} · {network._count.devices} observed device(s)</p></div><div className="flex gap-2"><Button size="sm" onClick={() => void discover(network.id)} disabled={busy === network.id}><Radar aria-hidden="true" /> Discover</Button><Button variant="ghost" size="icon" aria-label="Revoke network authorization" onClick={() => void revoke(network.id)} disabled={busy === network.id}><Trash2 aria-hidden="true" /></Button></div></div>)}
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Observed devices</h2>
+            {devices.length === 0 ? <EmptyState title="No data available" description="Run discovery on an authorized network." /> : <div className="grid gap-3 md:grid-cols-2">{devices.map((device) => <div key={device.id} className="rounded-xl border border-border bg-card/70 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-medium">{device.hostname ?? "Unknown host"}</p><p className="font-mono text-xs text-muted-foreground">{device.ipAddress} · {device.macAddress ?? "MAC unknown"}</p><p className="mt-1 text-xs text-muted-foreground">{device.vendor ?? "Vendor unknown"}</p></div><StatusBadge tone={device.status === "ONLINE" ? "success" : "accent"}>{device.status}</StatusBadge></div><p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><ShieldCheck aria-hidden="true" className="size-3" /> Risk {device.riskLevel}</p><p className="mt-1 text-xs text-muted-foreground">Last seen {formatDateTime(device.lastSeen)}</p><p className="text-xs text-muted-foreground">{device.authorizedNetwork?.interfaceName ?? "Network unknown"} · {device.authorizedNetwork?.cidr ?? "No network"}</p></div>)}</div>}
+          </section>
+        </>
+      )}
     </div>
   );
 }

@@ -156,6 +156,8 @@ async function captureStreamFrame(streamId: string, operationId: string) {
   active.capturing = true;
   try {
     const capture = await captureWindowsScreen();
+    const stillActive = activeStreams.get(streamId);
+    if (!stillActive || !stillActive.active) return;
     const frameId = `${streamId}-${randomUUID()}`;
     const chunkPlan = getStreamFrameMetadata(capture.bytes, streamChunkBytes);
     console.log(`Stream frame ${frameId}: bytes=${chunkPlan.totalBytes} chunks=${chunkPlan.totalChunks} chunkSize=${chunkPlan.chunkSize}`);

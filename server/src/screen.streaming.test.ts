@@ -15,10 +15,30 @@ describe("screen stream state machine", () => {
 
     expect(transitionScreenStreamState(stream, "STARTING").status).toBe("STARTING");
     expect(transitionScreenStreamState(stream, "STREAMING").status).toBe("STREAMING");
-    expect(() => transitionScreenStreamState(stream, "STREAMING")).toThrow(/invalid stream transition/i);
+    // The server transitions to STREAMING on every SCREEN_STREAM_FRAME_START while frames flow
+    // (realtime.ts FRAME_START handler). Re-entering STREAMING is therefore an idempotent no-op,
+    // not an error: a throw here would close the agent socket after frame 1.
+    expect(transitionScreenStreamState(stream, "STREAMING").status).toBe("STREAMING");
     expect(() => transitionScreenStreamState(stream, "FRAME")).toThrow(/invalid stream transition/i);
     expect(transitionScreenStreamState(stream, "STOPPING").status).toBe("STOPPING");
     expect(transitionScreenStreamState(stream, "STOPPED").status).toBe("STOPPED");
+    // A stopped stream must never become active again: exactly one active state per stream lifetime.
+    expect(() => transitionScreenStreamState(stream, "STREAMING")).toThrow(/invalid stream transition/i);
+  });
+
+  it("allows an immediate stop while the stream is still starting", () => {
+    const stream = createScreenStreamState({
+      streamId: "stream-quick-stop",
+      userId: "user-a",
+      pairedDeviceId: "device-a",
+      sessionId: "session-a",
+      operationId: "op-quick-stop",
+    });
+    expect(stream.status).toBe("STARTING");
+    // A stop that lands between SCREEN_STREAM_START and the first frame must be a clean abort,
+    // not a state-machine throw that disconnects the agent.
+    expect(transitionScreenStreamState(stream, "STOPPED").status).toBe("STOPPED");
+    expect(() => transitionScreenStreamState(stream, "STREAMING")).toThrow(/invalid stream transition/i);
   });
 
   it("bounds pending frames and drops stale work when the queue is full", () => {

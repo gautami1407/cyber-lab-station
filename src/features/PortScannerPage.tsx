@@ -161,7 +161,7 @@ export function PortScannerPage() {
                 : [
                     { text: `profile=${profile} target=${target}`, tone: "muted" },
                     { text: scan.state === "loading" ? "backend job running" : "job finished", tone: "default" },
-                    { text: "SYN/UDP/stealth scanning are not implemented", tone: "muted" },
+                    { text: "mode: TCP connect scan (SYN/UDP/stealth are not supported)", tone: "muted" },
                   ]
             }
           />

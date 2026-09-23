@@ -23,10 +23,35 @@ type Envelope<T> =
 
 let csrfToken = "";
 
+/** Safely parse JSON from a Response. Returns null for empty/non-JSON bodies. */
+async function safeJson<T>(response: Response): Promise<Envelope<T> | null> {
+  if (response.status === 204) return null;
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) return null;
+  const text = await response.text().catch(() => "");
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text) as Envelope<T>;
+  } catch {
+    return null;
+  }
+}
+
 async function ensureCsrf(): Promise<string> {
   if (csrfToken) return csrfToken;
-  const response = await fetch(`${API_BASE_URL}/csrf`, { credentials: "include" });
-  const payload = (await response.json()) as Envelope<{ csrfToken: string }>;
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/csrf`, { credentials: "include" });
+  } catch {
+    throw new ApiError(
+      "Backend API is unavailable. Make sure the NetLink server is running on port 4000.",
+      0,
+      "BACKEND_UNAVAILABLE",
+    );
+  }
+
+  const payload = await safeJson<{ csrfToken: string }>(response);
   if (!payload || payload.success === false) {
     throw new ApiError("Could not start a secure session with the API.", response.status, "CSRF");
   }
@@ -52,24 +77,42 @@ export async function request<TResponse, TBody = unknown>(
   if (options.body) init.body = JSON.stringify(options.body);
   if (options.signal) init.signal = options.signal;
 
-  const response = await fetch(`${API_BASE_URL}${path}`, init);
-
-  let payload: Envelope<TResponse> | null = null;
+  let response: Response;
   try {
-    payload = (await response.json()) as Envelope<TResponse>;
+    response = await fetch(`${API_BASE_URL}${path}`, init);
   } catch {
-    throw new ApiError("The request could not be completed. Please try again.", response.status);
+    throw new ApiError(
+      "Backend API is unavailable. Make sure the NetLink server is running on port 4000.",
+      0,
+      "BACKEND_UNAVAILABLE",
+    );
   }
 
-  if (response.status === 403 && payload && payload.success === false && payload.error.code === "CSRF_REJECTED") {
+  let payload: Envelope<TResponse> | null = await safeJson<TResponse>(response);
+
+  if (
+    response.status === 403 &&
+    payload &&
+    payload.success === false &&
+    payload.error.code === "CSRF_REJECTED"
+  ) {
     csrfToken = "";
     if (method !== "GET") {
       headers["X-CSRF-Token"] = await ensureCsrf();
       const retryInit: RequestInit = { method, headers, credentials: "include" };
       if (options.body) retryInit.body = JSON.stringify(options.body);
       if (options.signal) retryInit.signal = options.signal;
-      const retry = await fetch(`${API_BASE_URL}${path}`, retryInit);
-      payload = (await retry.json()) as Envelope<TResponse>;
+      let retry: Response;
+      try {
+        retry = await fetch(`${API_BASE_URL}${path}`, retryInit);
+      } catch {
+        throw new ApiError(
+          "Backend API is unavailable. Make sure the NetLink server is running on port 4000.",
+          0,
+          "BACKEND_UNAVAILABLE",
+        );
+      }
+      payload = await safeJson<TResponse>(retry);
       if (retry.ok && payload && payload.success !== false) return payload.data;
     }
   }

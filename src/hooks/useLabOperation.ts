@@ -12,37 +12,56 @@ export function useLabOperation<T>() {
   const [error, setError] = useState<string | null>(null);
   const [operationId, setOperationId] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const consecutiveFailures = useRef(0);
+  const MAX_POLL_FAILURES = 5;
 
   const clear = useCallback(() => {
     if (timer.current) {
       clearInterval(timer.current);
       timer.current = null;
     }
+    consecutiveFailures.current = 0;
   }, []);
 
   useEffect(() => clear, [clear]);
 
   const poll = useCallback(
     async (id: string) => {
-      const snapshot = await getOperation<T>(id);
-      setOpStatus(snapshot.status);
-      if (snapshot.progressTotal > 0) {
-        setProgress(Math.round((snapshot.progressDone / snapshot.progressTotal) * 100));
-      } else {
-        setProgress(null);
-      }
-      if (snapshot.status === "completed") {
-        clear();
-        setData(snapshot.result);
-        setState("success");
-      } else if (snapshot.status === "failed") {
-        clear();
-        setState("error");
-        setError(snapshot.error ?? "The operation failed.");
-      } else if (snapshot.status === "cancelled") {
-        clear();
-        setState("idle");
-        setProgress(null);
+      try {
+        const snapshot = await getOperation<T>(id);
+        consecutiveFailures.current = 0;
+        setOpStatus(snapshot.status);
+        if (snapshot.progressTotal > 0) {
+          setProgress(Math.round((snapshot.progressDone / snapshot.progressTotal) * 100));
+        } else {
+          setProgress(null);
+        }
+        if (snapshot.status === "completed") {
+          clear();
+          setData(snapshot.result);
+          setState("success");
+        } else if (snapshot.status === "failed") {
+          clear();
+          setState("error");
+          setError(snapshot.error ?? "The operation failed.");
+        } else if (snapshot.status === "cancelled") {
+          clear();
+          setState("idle");
+          setProgress(null);
+        }
+      } catch (err) {
+        consecutiveFailures.current += 1;
+        if (consecutiveFailures.current >= MAX_POLL_FAILURES) {
+          clear();
+          setState("error");
+          setOpStatus(null);
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Lost contact with the backend while polling for results.",
+          );
+        }
+        // else silently retry up to MAX_POLL_FAILURES times
       }
     },
     [clear],
@@ -65,6 +84,7 @@ export function useLabOperation<T>() {
         await poll(handle.operationId);
       } catch (err) {
         setState("error");
+        setOpStatus(null);
         setError(err instanceof Error ? err.message : "The operation could not be started.");
       }
     },

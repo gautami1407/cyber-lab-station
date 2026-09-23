@@ -77,7 +77,7 @@ export function registerScreenStreamState(input: { streamId: string; userId: str
 
 export function transitionScreenStreamState(stream: ScreenStreamRecord, nextStatus: string): ScreenStreamRecord {
   const allowedTransitions: Record<ScreenStreamStatus, ScreenStreamStatus[]> = {
-    STARTING: ["STARTING", "STREAMING", "FAILED"],
+    STARTING: ["STARTING", "STREAMING", "FAILED", "STOPPED"],
     STREAMING: ["STREAMING", "STOPPING", "FAILED", "STOPPED"],
     STOPPING: ["STOPPED", "FAILED"],
     STOPPED: ["FAILED"],
@@ -344,6 +344,8 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           stream.currentFrameBytes = totalBytes;
           stream.currentChunkIndex = 0;
           stream.lastFrameAt = Date.now();
+          if (stream.timeout) clearTimeout(stream.timeout);
+          stream.timeout = setTimeout(() => void failScreenStream(streamId, "Stream timeout"), config.screenStreamTimeoutMs);
           transitionScreenStreamState(stream, "STREAMING");
           publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME_START", { streamId: frame.streamId, operationId: frame.operationId, frameId, totalChunks, width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes });
           return;
@@ -385,7 +387,6 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           const payload = reconstructScreenStreamPayload({ totalChunks: frame.totalChunks, chunks: frame.chunks, totalBytes: frame.totalBytes });
           stream.pendingFrames.push({ frameId, createdAt: Date.now(), width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, payload });
           enforceScreenStreamBackpressure(stream, { frameId, createdAt: Date.now(), width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, payload });
-          publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME_START", { streamId: frame.streamId, operationId: frame.operationId, frameId, totalChunks: frame.totalChunks, width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes });
           publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME", { streamId: frame.streamId, operationId: frame.operationId, frameId, width: frame.width, height: frame.height, mimeType: frame.mimeType, totalBytes: frame.totalBytes, data: payload });
           publishUserEvent(stream.userId, "SCREEN_STREAM_FRAME_END", { streamId: frame.streamId, operationId: frame.operationId, frameId, totalChunks: frame.totalChunks });
           streamFrames.delete(frameId);
