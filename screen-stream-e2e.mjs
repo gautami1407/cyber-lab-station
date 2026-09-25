@@ -37,8 +37,11 @@ function log(title, value) {
   console.log(JSON.stringify(value, null, 2));
 }
 
-function isValidPng(bytes) {
-  if (!bytes || bytes.length < 24) return false;
+function isValidImage(bytes, mimeType) {
+  if (!bytes || bytes.length < 12) return false;
+  if (mimeType === 'image/jpeg') {
+    return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
   const magic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
   for (let i = 0; i < 8; i += 1) if (bytes[i] !== magic[i]) return false;
   return bytes[12] === 0x49 && bytes[13] === 0x48 && bytes[14] === 0x44 && bytes[15] === 0x52;
@@ -130,6 +133,34 @@ async function startSessionAndStream() {
   return { sessionId: sessionJson.data.id, streamId: opJson.data.streamId, operationId: opJson.data.id };
 }
 
+// ---- wait for the agent to authenticate before issuing operations ----
+// The server bumps connectionStatus to CONNECTED only after a valid AGENT_AUTH,
+// so this is a true observability of the agent being ready (a real client would
+// act only once the device shows online in the UI).
+let agentReady = false;
+const readyDeadline = Date.now() + 20_000;
+while (Date.now() < readyDeadline) {
+  try {
+    const list = await (await request('/api/pairing')).json();
+    const entry = (list.data ?? []).find((item) => Boolean(item.pairedDevice) && item.pairedDevice.id === pairedDeviceId);
+    if (entry?.pairedDevice?.connectionStatus === 'CONNECTED') {
+      agentReady = true;
+      break;
+    }
+  } catch {
+    /* transient; keep polling */
+  }
+  await sleep(500);
+}
+log('AGENT_READY', { connected: agentReady });
+if (!agentReady) {
+  console.log('\n[E2E-FAILURE] agent did not authenticate within 20s.');
+  userWs.close();
+  agent.kill('SIGKILL');
+  rmSync(dir, { recursive: true, force: true });
+  process.exit(1);
+}
+
 const stream1 = await startSessionAndStream();
 log('STREAM_1_STARTED', stream1);
 
@@ -158,7 +189,7 @@ while (Date.now() < deadline) {
       frameId: data.frameId,
       totalBytes: data.totalBytes,
       decodedBytes: decoded ? decoded.length : -1,
-      pngValid: decoded ? isValidPng(decoded) : false,
+      valid: decoded ? isValidImage(decoded, data.mimeType) : false,
     });
   }
   if (agentExited) {
@@ -167,7 +198,8 @@ while (Date.now() < deadline) {
   }
   await sleep(400);
 }
-const stream1Valid = stream1Frames.filter((f) => f.pngValid && f.decodedBytes === f.totalBytes);
+const stream1Valid = stream1Frames.filter((f) => f.valid && f.decodedBytes === f.totalBytes);
+const agentAliveAfterStream1 = !agentExited; // measured before the explicit SIGTERM at the end
 log('STREAM_1_FRAMES', { total: stream1Frames.length, byteExactAndPngValid: stream1Valid.length, first: stream1Frames.slice(0, 3), errored: userEvents.filter((e) => e.type === 'SCREEN_STREAM_ERROR' && e.data?.streamId === stream1.streamId).map((e) => e.data) });
 
 // ---- stop ----
@@ -195,8 +227,8 @@ log('DISCONNECT_CLEANUP', { stream2ErrorEvent: errorSeen });
 await sleep(1500);
 
 const stream1NoPrematureError = !userEvents.some((e) => e.type === 'SCREEN_STREAM_ERROR' && e.data?.streamId === stream1.streamId);
-const allStream1Valid = stream1Frames.length > 0 && stream1Frames.every((f) => f.pngValid && f.decodedBytes === f.totalBytes);
-const finalAgentAlive = !agentExited;
+const allStream1Valid = stream1Frames.length > 0 && stream1Frames.every((f) => f.valid && f.decodedBytes === f.totalBytes);
+const finalAgentAlive = agentAliveAfterStream1;
 const result = {
   stream1Frames: stream1Frames.length,
   stream1ByteExactPngValid: stream1Valid.length,

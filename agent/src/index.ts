@@ -72,9 +72,17 @@ async function captureWindowsScreen() {
   const monitor = Monitor.all().find((item) => Boolean(item.isPrimary)) ?? Monitor.all()[0];
   if (!monitor) throw new Error("No monitor is available for capture.");
   const image = await monitor.captureImage();
-  const bytes = await image.toPng();
-  if (bytes.length > streamMaxFrameBytes) throw new Error("Stream frame exceeds the configured size limit.");
-  return { bytes, width: image.width, height: image.height };
+  let bytes = await image.toPng();
+  let mimeType = "image/png";
+  if (bytes.length > streamMaxFrameBytes) {
+    // PNG loses to screen complexity on high-res displays; JPEG is far smaller for
+    // realistic desktop content and keeps frames under the transport/server cap.
+    bytes = await image.toJpeg();
+    mimeType = "image/jpeg";
+    console.warn(`Stream frame PNG exceeded the ${streamMaxFrameBytes}-byte cap; falling back to JPEG (${bytes.length} bytes).`);
+    if (bytes.length > streamMaxFrameBytes) throw new Error(`Stream frame exceeds the configured size limit (${bytes.length} > ${streamMaxFrameBytes}).`);
+  }
+  return { bytes, width: image.width, height: image.height, mimeType };
 }
 
 function startAgent() {
@@ -161,7 +169,7 @@ async function captureStreamFrame(streamId: string, operationId: string) {
     const frameId = `${streamId}-${randomUUID()}`;
     const chunkPlan = getStreamFrameMetadata(capture.bytes, streamChunkBytes);
     console.log(`Stream frame ${frameId}: bytes=${chunkPlan.totalBytes} chunks=${chunkPlan.totalChunks} chunkSize=${chunkPlan.chunkSize}`);
-    const startEvent = { type: "SCREEN_STREAM_FRAME_START", operationId, streamId, frameId, totalChunks: chunkPlan.totalChunks, width: capture.width, height: capture.height, mimeType: "image/png", totalBytes: chunkPlan.totalBytes };
+    const startEvent = { type: "SCREEN_STREAM_FRAME_START", operationId, streamId, frameId, totalChunks: chunkPlan.totalChunks, width: capture.width, height: capture.height, mimeType: capture.mimeType, totalBytes: chunkPlan.totalBytes };
     if (!safeSend(startEvent)) {
       stopStream(operationId, streamId);
       return;
@@ -212,9 +220,12 @@ async function startStream(operationId: string, requestedStreamId?: string) {
 
 function stopStream(operationId: string, requestedStreamId?: string) {
   if (!socket) return;
+  // The STOP operation is a *separate* remote operation from the one that started the
+  // stream, so its operationId never matches the stream's owner operationId. Resolve
+  // the target stream by the supplied streamId (server-validated) first, then by owner.
   const streamId = requestedStreamId ?? [...activeStreams.keys()].find((candidate) => activeStreams.get(candidate)?.operationId === operationId);
   const current = streamId ? activeStreams.get(streamId) : undefined;
-  if (!current || (requestedStreamId && current.streamId !== requestedStreamId) || current.operationId !== operationId) {
+  if (!current) {
     socket.send(JSON.stringify({ type: "REMOTE_RESULT", operationId, status: "FAILED", reason: "No active stream matches this operation." }));
     return;
   }
@@ -222,7 +233,7 @@ function stopStream(operationId: string, requestedStreamId?: string) {
   current.active = false;
   clearInterval(current.timer);
   socket.send(JSON.stringify({ type: "SCREEN_STREAM_STOPPED", operationId, streamId: current.streamId, metadata: { frameCount: current.frameNumber } }));
-  if (streamId) activeStreams.delete(streamId);
+  activeStreams.delete(current.streamId);
 }
 
 const isDirectScriptExecution = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;

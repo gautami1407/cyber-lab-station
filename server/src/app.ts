@@ -45,7 +45,7 @@ export function createApp() {
       allowedHeaders: ["Content-Type", "X-CSRF-Token"],
     }),
   );
-  app.use(express.json({ limit: "32kb" }));
+  app.use(express.json({ limit: "8mb" }));
   app.use(cookieParser());
   app.use(
     rateLimit({

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Errors } from "../errors.js";
 import { prisma } from "../prisma.js";
 import { audit } from "./audit.js";
-import { cleanupScreenStream, disconnectAgent, getActiveScreenStreamForSession, registerScreenStreamState, sendAgentOperation } from "../realtime.js";
+import { cleanupScreenStream, disconnectAgent, getActiveScreenStreamForSession, isAgentConnecting, queuePendingAgentOperation, registerScreenStreamState, sendAgentOperation } from "../realtime.js";
 
 const ALLOWED_OPERATIONS = new Set(["GET_SYSTEM_INFO", "SCREEN_CAPTURE", "SCREEN_STREAM", "SCREEN_STREAM_STOP"]);
 
@@ -85,6 +85,12 @@ export async function requestRemoteOperation(userId: string, pairedDeviceId: str
   }
 
   if (!sendAgentOperation(pairedDeviceId, result.id, sessionId ?? "", operation, streamId)) {
+    if (isAgentConnecting(pairedDeviceId)) {
+      // The agent socket is mid-authentication; hold delivery until it completes (bounded).
+      queuePendingAgentOperation({ pairedDeviceId, operationId: result.id, sessionId: sessionId ?? "", operation, streamId, userId });
+      await audit({ userId, action: "REMOTE_OPERATION_QUEUED", success: true, target: result.id, ip, metadata: { operation } });
+      return { ...result, streamId };
+    }
     if (streamId) await cleanupScreenStream(streamId, "No authenticated NetLink agent is connected.", userId).catch(() => undefined);
     const rejected = await prisma.remoteOperation.update({ where: { id: result.id }, data: { status: "REJECTED", reason: "No authenticated NetLink agent is connected." } });
     await audit({ userId, action: "REMOTE_OPERATION_REJECTED", success: false, target: rejected.id, ip, metadata: { operation } });
@@ -92,5 +98,5 @@ export async function requestRemoteOperation(userId: string, pairedDeviceId: str
   }
   if (operation === "SCREEN_CAPTURE") await audit({ userId, action: "SCREEN_CAPTURE_REQUESTED", success: true, target: result.id, ip });
   await audit({ userId, action: "REMOTE_OPERATION_REQUESTED", success: true, target: result.id, ip, metadata: { operation } });
-  return result;
+  return { ...result, streamId };
 }

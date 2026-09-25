@@ -1,6 +1,6 @@
 import { WebSocket, WebSocketServer, type WebSocket as WebSocketClient } from "ws";
 import type { IncomingMessage, Server } from "node:http";
-import { randomBytes, verify } from "node:crypto";
+import { createHash, randomBytes, verify } from "node:crypto";
 import { config } from "./config.js";
 import { touchSession } from "./services/auth.js";
 import { prisma } from "./prisma.js";
@@ -8,7 +8,15 @@ import { audit } from "./services/audit.js";
 
 const clients = new Map<string, Set<WebSocketClient>>();
 const agents = new Map<string, WebSocketClient>();
+const connectingAgents = new Map<string, WebSocketClient>();
+type PendingAgentOperation = { pairedDeviceId: string; operationId: string; sessionId: string; operation: string; streamId?: string; extra?: Record<string, unknown>; userId: string; onExpired?: () => Promise<void>; timer: NodeJS.Timeout };
+const pendingAgentOperations = new Map<string, PendingAgentOperation>();
 const heartbeatTimes = new Map<string, number>();
+type FileTransferRecord = { transferId: string; operationId: string; pairedDeviceId: string; userId: string; safeName: string; byteLength: number; receivedBytes: number; nextSequence: number; totalChunks: number; chunks: Buffer[]; timeout: NodeJS.Timeout };
+const fileTransfers = new Map<string, FileTransferRecord>();
+type PendingFilePush = { operationId: string; transferId: string; pairedDeviceId: string; userId: string; safeName: string; byteLength: number; totalChunks: number; base64: string; timer: NodeJS.Timeout };
+const pendingFilePushes = new Map<string, PendingFilePush>();
+const fileTransferBuffers = new Map<string, Buffer>();
 type ScreenTransfer = { transferId: string; operationId: string; pairedDeviceId: string; userId: string; byteLength: number; receivedBytes: number; nextSequence: number; totalChunks: number; timeout: NodeJS.Timeout };
 export type ScreenStreamStatus = "STARTING" | "STREAMING" | "STOPPING" | "STOPPED" | "FAILED";
 export type ScreenStreamRecord = {
@@ -220,17 +228,27 @@ export function closeRealtime() {
   heartbeatTimes.clear();
   for (const transfer of screenTransfers.values()) clearTimeout(transfer.timeout);
   for (const stream of screenStreams.values()) clearTimeout(stream.timeout);
+  for (const pending of pendingAgentOperations.values()) clearTimeout(pending.timer);
+  for (const record of fileTransfers.values()) clearTimeout(record.timeout);
+  for (const push of pendingFilePushes.values()) clearTimeout(push.timer);
   screenTransfers.clear();
   screenStreams.clear();
   streamFrames.clear();
+  connectingAgents.clear();
+  pendingAgentOperations.clear();
+  fileTransfers.clear();
+  pendingFilePushes.clear();
+  fileTransferBuffers.clear();
 }
 
 async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.WritableStream, head: Buffer, pairedDeviceId: string | null) {
   if (!pairedDeviceId) return reject(socket);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
+  wss.on("error", (error) => console.warn(`Agent upgrade error. pairedDeviceId=${pairedDeviceId ?? "<none>"}`, error.message));
   const challenge = randomBytes(32).toString("base64url");
   wss.handleUpgrade(request, socket as never, head, (client) => {
     let authenticated = false;
+    connectingAgents.set(pairedDeviceId, client);
     client.send(JSON.stringify({ type: "AGENT_CHALLENGE", nonce: challenge }));
     client.on("message", async (raw) => {
       try {
@@ -241,9 +259,11 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           authenticated = true;
           heartbeatTimes.set(pairedDeviceId, Date.now() - Math.max(1000, config.agentHeartbeatIntervalMs / 2));
           agents.set(pairedDeviceId, client);
+          connectingAgents.delete(pairedDeviceId);
           await prisma.pairedDevice.update({ where: { id: pairedDeviceId }, data: { connectionStatus: "CONNECTED", lastSeen: new Date() } });
           await audit({ userId: paired.userId, action: "AGENT_CONNECTED", success: true, target: pairedDeviceId });
           client.send(JSON.stringify({ type: "AGENT_AUTHENTICATED", pairedDeviceId }));
+          flushPendingAgentOperations(pairedDeviceId);
           return;
         }
         if (authenticated && message.type === "HEARTBEAT") {
@@ -316,6 +336,7 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           current.lastChunkAt = Date.now();
           current.lastFrameAt = Date.now();
           const timeout = setTimeout(() => void failScreenStream(streamId, "Stream timeout"), config.screenStreamTimeoutMs);
+          if (current.timeout) clearTimeout(current.timeout);
           current.timeout = timeout;
           screenStreams.set(streamId, current);
           transitionScreenStreamState(current, "STARTING");
@@ -333,8 +354,13 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           const height = Number((message as { height?: number }).height);
           const mimeType = String((message as { mimeType?: string }).mimeType ?? "image/png");
           const totalBytes = Number((message as { totalBytes?: number }).totalBytes);
-          if (!frameId || !Number.isInteger(totalChunks) || totalChunks < 1 || !Number.isFinite(width) || !Number.isFinite(height) || totalBytes < 1 || totalBytes > config.screenStreamMaxFrameBytes) {
+          if (!frameId || !Number.isInteger(totalChunks) || totalChunks < 1 || !Number.isFinite(width) || !Number.isFinite(height) || totalBytes < 1) {
             return client.close(1008, "Invalid stream frame metadata");
+          }
+          if (totalBytes > config.screenStreamMaxFrameBytes) {
+            // Recoverable: an oversized frame is a payload problem, not a protocol
+            // breach - fail the stream (with a user event) instead of killing the socket.
+            return void failScreenStream(streamId, "Stream frame exceeds the configured size limit.").catch(() => undefined);
           }
           if (stream.currentFrameId && stream.currentFrameId !== frameId && stream.currentFrameBytes > 0) return client.close(1008, "Frame already in progress");
           if (streamFrames.has(frameId)) return client.close(1008, "Duplicate stream frame");
@@ -408,12 +434,87 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
           publishUserEvent(stream.userId, "SCREEN_STREAM_STOPPED", { operationId: stream.operationId, streamId, metadata });
           return;
         }
+        if (authenticated && message.type === "FILE_START") {
+          const transferId = String((message as { transferId?: string }).transferId ?? "");
+          const operationId = String((message as { operationId?: string }).operationId ?? "");
+          const safeName = String((message as { safeName?: string }).safeName ?? "");
+          const byteLength = Number((message as { byteLength?: number }).byteLength);
+          const totalChunks = Number((message as { totalChunks?: number }).totalChunks);
+          if (!transferId || !Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > config.fileTransferMaxBytes || !Number.isSafeInteger(totalChunks) || totalChunks < 1 || totalChunks > Math.ceil(config.fileTransferMaxBytes / config.fileTransferChunkBytes) || !safeName) {
+            return client.close(1008, "Invalid file transfer");
+          }
+          const record = registerFileDownloadTransfer({ transferId, operationId, pairedDeviceId, safeName, byteLength, totalChunks });
+          const operation = await prisma.remoteOperation.findFirst({ where: { id: operationId, pairedDeviceId, operation: "FILE_DOWNLOAD", status: "QUEUED" }, include: { user: true } });
+          if (!operation) {
+            clearTimeout(record.timeout);
+            fileTransfers.delete(transferId);
+            return client.close(1008, "Invalid file transfer");
+          }
+          record.userId = operation.userId;
+          await prisma.fileTransfer.update({ where: { id: transferId }, data: { status: "RUNNING", safeName, sizeBytes: byteLength, operationId } }).catch(() => undefined);
+          publishUserEvent(operation.userId, "FILE_START", { transferId, operationId, safeName, byteLength, totalChunks });
+          return;
+        }
+        if (authenticated && message.type === "FILE_CHUNK") {
+          const transferId = String((message as { transferId?: string }).transferId ?? "");
+          const record = fileTransfers.get(transferId);
+          const sequence = Number((message as { sequence?: number }).sequence);
+          const data = String((message as { data?: string }).data ?? "");
+          if (!record || record.pairedDeviceId !== pairedDeviceId || sequence !== record.nextSequence || data.length === 0 || data.length > Math.ceil(config.fileTransferChunkBytes * 4 / 3) + 32) return client.close(1008, "Invalid file chunk");
+          const chunk = Buffer.from(data, "base64");
+          if (chunk.length < 1 || record.receivedBytes + chunk.length > record.byteLength) return client.close(1008, "Invalid file chunk size");
+          record.chunks.push(chunk);
+          record.receivedBytes += chunk.length;
+          record.nextSequence += 1;
+          publishUserEvent(record.userId, "FILE_CHUNK", { transferId, operationId: record.operationId, sequence, data });
+          return;
+        }
+        if (authenticated && message.type === "FILE_END") {
+          const transferId = String((message as { transferId?: string }).transferId ?? "");
+          const record = fileTransfers.get(transferId);
+          if (!record || record.pairedDeviceId !== pairedDeviceId || record.receivedBytes !== record.byteLength || record.nextSequence !== record.totalChunks) return client.close(1008, "Invalid file completion");
+          clearTimeout(record.timeout);
+          fileTransfers.delete(transferId);
+          const assembled = Buffer.concat(record.chunks, record.byteLength);
+          const sha256 = createHash("sha256").update(assembled).digest("hex");
+          const fileData = (message as { metadata?: Record<string, unknown> }).metadata ?? {};
+          const expectedSha = String(fileData.sha256 ?? "");
+          if (expectedSha && expectedSha !== sha256) {
+            await prisma.remoteOperation.update({ where: { id: record.operationId }, data: { status: "FAILED", reason: "File checksum mismatch." } }).catch(() => undefined);
+            await prisma.fileTransfer.update({ where: { id: transferId }, data: { status: "FAILED", reason: "File checksum mismatch." } }).catch(() => undefined);
+            publishUserEvent(record.userId, "FILE_ERROR", { transferId, operationId: record.operationId, reason: "File checksum mismatch." });
+            return;
+          }
+          fileTransferBuffers.set(transferId, assembled);
+          await prisma.remoteOperation.update({ where: { id: record.operationId }, data: { status: "COMPLETED", resultJson: { ...fileData, sha256, sizeBytes: record.byteLength } as never } });
+          await prisma.fileTransfer.update({ where: { id: transferId }, data: { status: "COMPLETED", sizeBytes: record.byteLength, sha256, completedAt: new Date() } }).catch(() => undefined);
+          await audit({ userId: record.userId, action: "FILE_DOWNLOAD_COMPLETED", success: true, target: transferId, metadata: { safeName: record.safeName, byteLength: record.byteLength, sha256 } }).catch(() => undefined);
+          publishUserEvent(record.userId, "FILE_END", { transferId, operationId: record.operationId, safeName: record.safeName, byteLength: record.byteLength, sha256, metadata: fileData });
+          return;
+        }
         if (!authenticated || message.type !== "REMOTE_RESULT" || !message.operationId) return client.close(1008, "Invalid agent message");
         const status = message.status ?? "FAILED";
         if (!["COMPLETED", "FAILED", "UNSUPPORTED"].includes(status)) return client.close(1008, "Invalid operation status");
         const operation = await prisma.remoteOperation.findFirst({ where: { id: message.operationId, pairedDeviceId } });
         if (!operation) return client.close(1008, "Operation is not owned by this agent");
         await prisma.remoteOperation.update({ where: { id: operation.id }, data: { status, reason: message.reason ?? null, resultJson: message.data as never } });
+        if (operation.operation === "FILE_UPLOAD") {
+          const push = pendingFilePushes.get(operation.id);
+          if (push) {
+            clearTimeout(push.timer);
+            pendingFilePushes.delete(operation.id);
+          }
+          if (status === "COMPLETED") {
+            const fileData = (message.data as { sha256?: string; sizeBytes?: number } | undefined) ?? {};
+            await prisma.fileTransfer.update({ where: { operationId: operation.id }, data: { status: "COMPLETED", sha256: fileData.sha256 ?? undefined, completedAt: new Date() } }).catch(() => undefined);
+            await audit({ userId: operation.userId, action: "FILE_UPLOAD_COMPLETED", success: true, target: operation.id, metadata: { ...fileData } }).catch(() => undefined);
+            publishUserEvent(operation.userId, "FILE_UPLOAD_END", { operationId: operation.id, transferId: push?.transferId ?? null, succeeded: true, ...fileData });
+          } else {
+            await prisma.fileTransfer.update({ where: { operationId: operation.id }, data: { status: "FAILED", reason: message.reason ?? "The agent failed to receive the file." } }).catch(() => undefined);
+            await audit({ userId: operation.userId, action: "FILE_UPLOAD_FAILED", success: false, target: operation.id, metadata: { reason: message.reason } }).catch(() => undefined);
+            publishUserEvent(operation.userId, "FILE_UPLOAD_END", { operationId: operation.id, transferId: push?.transferId ?? null, succeeded: false, reason: message.reason });
+          }
+        }
       } catch (error) {
         console.error(`Agent payload handling failed. pairedDeviceId=${pairedDeviceId}`, error);
         client.close(1008, "Invalid agent payload");
@@ -422,6 +523,8 @@ async function handleAgentUpgrade(request: IncomingMessage, socket: NodeJS.Writa
     client.on("close", (code, reason) => {
       console.warn(`Agent socket closed. pairedDeviceId=${pairedDeviceId} code=${code} reason=${reason.toString() || "<none>"}`);
       if (agents.get(pairedDeviceId) === client) agents.delete(pairedDeviceId);
+      connectingAgents.delete(pairedDeviceId);
+      discardPendingAgentOperations(pairedDeviceId);
       heartbeatTimes.delete(pairedDeviceId);
       void cleanupAgent(pairedDeviceId, "Agent disconnected").catch(() => undefined);
     });
@@ -439,6 +542,8 @@ async function cleanupAgent(pairedDeviceId: string, reason: string) {
   for (const transfer of [...screenTransfers.values()]) if (transfer.pairedDeviceId === pairedDeviceId) await failScreenTransfer(transfer.transferId, reason);
   for (const stream of [...screenStreams.values()]) if (stream.pairedDeviceId === pairedDeviceId) await failScreenStream(stream.streamId, reason);
   for (const frame of [...streamFrames.values()]) if (frame.pairedDeviceId === pairedDeviceId) streamFrames.delete(frame.frameId);
+  for (const record of [...fileTransfers.values()]) if (record.pairedDeviceId === pairedDeviceId) await failFileTransfer(record.transferId, reason);
+  for (const [operationId, push] of [...pendingFilePushes]) if (push.pairedDeviceId === pairedDeviceId) await failFileUpload(operationId, reason);
   await audit({ userId: paired.userId, action: reason === "Agent heartbeat timeout" ? "AGENT_HEARTBEAT_TIMEOUT" : "AGENT_DISCONNECTED", success: false, target: pairedDeviceId, metadata: { reason } }).catch(() => undefined);
 }
 
@@ -498,11 +603,143 @@ export async function cleanupStaleAgents(now = Date.now()) {
   }
 }
 
-export function sendAgentOperation(pairedDeviceId: string, operationId: string, sessionId: string, operation: string, streamId?: string) {
+export function sendAgentOperation(pairedDeviceId: string, operationId: string, sessionId: string, operation: string, streamId?: string, extra?: Record<string, unknown>) {
   const agent = agents.get(pairedDeviceId);
   if (!agent || agent.readyState !== WebSocket.OPEN) return false;
-  agent.send(JSON.stringify({ type: "REMOTE_OPERATION", operationId, sessionId, operation, streamId, timestamp: new Date().toISOString() }));
+  agent.send(JSON.stringify({ type: "REMOTE_OPERATION", operationId, sessionId, operation, streamId, data: extra ?? undefined, timestamp: new Date().toISOString() }));
   return true;
+}
+
+/** True while the agent socket for this device has connected but not yet completed authentication. */
+export function isAgentConnecting(pairedDeviceId: string) {
+  return connectingAgents.has(pairedDeviceId);
+}
+
+/**
+ * Holds a remote operation for delivery once the agent authenticates (closes the
+ * request-vs-authentication race). If delivery does not happen within the bounded
+ * window the operation is rejected exactly like the no-agent path.
+ */
+export function queuePendingAgentOperation(input: { pairedDeviceId: string; operationId: string; sessionId: string; operation: string; streamId?: string; extra?: Record<string, unknown>; userId: string; onExpired?: () => Promise<void> }) {
+  if (pendingAgentOperations.has(input.operationId)) return;
+  const timer = setTimeout(() => void rejectPendingAgentOperation(input.operationId, "No authenticated NetLink agent is connected."), config.operationDeliveryTimeoutMs);
+  pendingAgentOperations.set(input.operationId, { ...input, timer });
+}
+
+/** Drops pending deliveries for a device without an explicit rejection; cleanupAgent handles the DB status. */
+export function discardPendingAgentOperations(pairedDeviceId: string) {
+  for (const [operationId, pending] of [...pendingAgentOperations]) {
+    if (pending.pairedDeviceId !== pairedDeviceId) continue;
+    clearTimeout(pending.timer);
+    pendingAgentOperations.delete(operationId);
+  }
+}
+
+/** Delivers every pending operation once the agent socket is authenticated. */
+export function flushPendingAgentOperations(pairedDeviceId: string) {
+  for (const [operationId, pending] of [...pendingAgentOperations]) {
+    if (pending.pairedDeviceId !== pairedDeviceId) continue;
+    if (sendAgentOperation(pairedDeviceId, operationId, pending.sessionId, pending.operation, pending.streamId, pending.extra)) {
+      clearTimeout(pending.timer);
+      pendingAgentOperations.delete(operationId);
+      resumePendingFilePush(operationId);
+    }
+  }
+}
+
+async function rejectPendingAgentOperation(operationId: string, reason: string) {
+  const pending = pendingAgentOperations.get(operationId);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingAgentOperations.delete(operationId);
+  if (pending.streamId) await cleanupScreenStream(pending.streamId, reason).catch(() => undefined);
+  await prisma.remoteOperation.update({ where: { id: operationId }, data: { status: "REJECTED", reason } }).catch(() => undefined);
+  await audit({ userId: pending.userId, action: "REMOTE_OPERATION_REJECTED", success: false, target: operationId, metadata: { operation: pending.operation } }).catch(() => undefined);
+  if (pending.onExpired) await pending.onExpired().catch(() => undefined);
+}
+
+// ---- file transfer (agent -> user "OUT", user -> agent "IN") ----
+
+export function registerFileDownloadTransfer(input: { transferId: string; operationId: string; pairedDeviceId: string; safeName: string; byteLength: number; totalChunks: number }): FileTransferRecord {
+  const timeout = setTimeout(() => void failFileTransfer(input.transferId, "File transfer timeout"), config.fileTransferTimeoutMs);
+  const record: FileTransferRecord = { ...input, userId: "", receivedBytes: 0, nextSequence: 0, chunks: [], timeout };
+  fileTransfers.set(input.transferId, record);
+  return record;
+}
+
+/**
+ * Starts pushing an upload to the agent in bounded chunks. Returns "DELIVERED" when
+ * the chunks were sent now, "QUEUED" when the agent is mid-authentication (flush
+ * resumes), or "REJECTED" when no agent is reachable.
+ */
+export function startFilePushToAgent(input: { operationId: string; transferId: string; pairedDeviceId: string; userId: string; safeName: string; byteLength: number; totalChunks: number; base64: string }): "DELIVERED" | "QUEUED" | "REJECTED" {
+  if (pendingFilePushes.has(input.operationId)) return "QUEUED";
+  const timer = setTimeout(() => void failFileUpload(input.operationId, "File upload timeout"), config.fileTransferTimeoutMs);
+  pendingFilePushes.set(input.operationId, { ...input, timer });
+  const agent = agents.get(input.pairedDeviceId);
+  if (!agent || agent.readyState !== WebSocket.OPEN) {
+    if (connectingAgents.has(input.pairedDeviceId)) return "QUEUED";
+    return "REJECTED";
+  }
+  return deliverFilePush(input.operationId) ? "DELIVERED" : "REJECTED";
+}
+
+function resumePendingFilePush(operationId: string) {
+  const pending = pendingFilePushes.get(operationId);
+  if (!pending) return;
+  deliverFilePush(operationId);
+}
+
+function deliverFilePush(operationId: string): boolean {
+  const pending = pendingFilePushes.get(operationId);
+  if (!pending) return false;
+  const agent = agents.get(pending.pairedDeviceId);
+  if (!agent || agent.readyState !== WebSocket.OPEN) return false;
+  const start = { type: "FILE_PUSH_START", operationId, transferId: pending.transferId, safeName: pending.safeName, byteLength: pending.byteLength, totalChunks: pending.totalChunks };
+  if (Buffer.byteLength(JSON.stringify(start), "utf8") > 16 * 1024) return false;
+  agent.send(JSON.stringify(start));
+  let sequence = 0;
+  for (let startIndex = 0; startIndex < pending.base64.length; startIndex += config.fileTransferChunkBytes) {
+    const data = pending.base64.slice(startIndex, Math.min(pending.base64.length, startIndex + config.fileTransferChunkBytes));
+    const message = JSON.stringify({ type: "FILE_PUSH_CHUNK", operationId, transferId: pending.transferId, sequence, data });
+    if (Buffer.byteLength(message, "utf8") > 16 * 1024) return false;
+    agent.send(message);
+    sequence += 1;
+  }
+  clearTimeout(pending.timer);
+  pendingFilePushes.delete(operationId);
+  agent.send(JSON.stringify({ type: "FILE_PUSH_END", operationId, transferId: pending.transferId, metadata: { sha256: createHash("sha256").update(Buffer.from(pending.base64, "base64")).digest("hex") } }));
+  return true;
+}
+
+async function failFileTransfer(transferId: string, reason: string) {
+  const record = fileTransfers.get(transferId);
+  if (!record) return;
+  clearTimeout(record.timeout);
+  fileTransfers.delete(transferId);
+  await prisma.remoteOperation.update({ where: { id: record.operationId }, data: { status: "FAILED", reason } }).catch(() => undefined);
+  await prisma.fileTransfer.update({ where: { id: transferId }, data: { status: "FAILED", reason } }).catch(() => undefined);
+  await audit({ userId: record.userId, action: "FILE_TRANSFER_FAILED", success: false, target: transferId, metadata: { direction: "OUT", reason } }).catch(() => undefined);
+  publishUserEvent(record.userId, "FILE_ERROR", { transferId, operationId: record.operationId, reason });
+}
+
+async function failFileUpload(operationId: string, reason: string) {
+  const pending = pendingFilePushes.get(operationId);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingFilePushes.delete(operationId);
+  await prisma.remoteOperation.update({ where: { id: operationId }, data: { status: "FAILED", reason } }).catch(() => undefined);
+  await prisma.fileTransfer.update({ where: { id: pending.transferId }, data: { status: "FAILED", reason } }).catch(() => undefined);
+  await audit({ userId: pending.userId, action: "FILE_UPLOAD_FAILED", success: false, target: pending.transferId, metadata: { reason } }).catch(() => undefined);
+  publishUserEvent(pending.userId, "FILE_UPLOAD_END", { operationId, transferId: pending.transferId, succeeded: false, reason });
+}
+
+export function getFileTransferBuffer(transferId: string) {
+  return fileTransferBuffers.get(transferId);
+}
+
+export function clearFileTransferBuffer(transferId: string) {
+  fileTransferBuffers.delete(transferId);
 }
 
 export function disconnectAgent(pairedDeviceId: string, reason = "Pairing revoked") {

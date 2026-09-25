@@ -387,7 +387,13 @@ model FileTransfer {
   safeName       String
   status         String       @default("REJECTED")
   sizeBytes      Int?
+  operationId    String?      @unique
+  remotePath     String?
+  reason         String?
+  sha256         String?
+  completedAt    DateTime?
   createdAt      DateTime     @default(now())
 
   @@index([userId, createdAt])
+  @@index([userId, status])
 }

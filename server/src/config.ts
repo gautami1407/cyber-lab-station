@@ -59,6 +59,10 @@ export const config = {
   screenStreamTimeoutMs: num("SCREEN_STREAM_TIMEOUT_MS", 30_000),
   screenStreamMaxPendingFrames: num("SCREEN_STREAM_MAX_PENDING_FRAMES", 3),
   screenStreamMaxConcurrentStreams: num("SCREEN_STREAM_MAX_CONCURRENT_STREAMS", 1),
+  operationDeliveryTimeoutMs: num("OPERATION_DELIVERY_TIMEOUT_MS", 15_000),
+  fileTransferMaxBytes: num("FILE_TRANSFER_MAX_BYTES", 5 * 1024 * 1024),
+  fileTransferChunkBytes: num("FILE_TRANSFER_CHUNK_BYTES", 8 * 1024),
+  fileTransferTimeoutMs: num("FILE_TRANSFER_TIMEOUT_MS", 20_000),
   cookieName: "cyberlab.sid",
   apiVersion: "v1",
 };

@@ -22,6 +22,12 @@ export function NetworksPage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   async function load() {
+    if (!user) {
+      setLoading(false);
+      setError("UNAUTHENTICATED");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -34,7 +40,6 @@ export function NetworksPage() {
       setNetworks(nextNetworks);
       setDevices(nextDevices);
     } catch (cause) {
-      // Check if this is an authentication error
       if (cause instanceof ApiError && cause.status === 401) {
         setError("UNAUTHENTICATED");
       } else {
@@ -46,13 +51,15 @@ export function NetworksPage() {
   }
 
   useEffect(() => {
-    // Only load data if authenticated
-    if (!authLoading && user) {
-      void load();
-    } else if (!authLoading && !user) {
+    if (authLoading) return;
+
+    if (!user) {
       setLoading(false);
       setError("UNAUTHENTICATED");
+      return;
     }
+
+    void load();
   }, [user, authLoading]);
 
   async function authorize(item: LocalInterface) {
@@ -92,6 +99,37 @@ export function NetworksPage() {
     } finally {
       setBusy(null);
     }
+  }
+
+  if (authLoading) {
+    return (
+      <div className="space-y-6">
+        <PageHeader eyebrow="NetLink foundation" title="Networks & Devices" description="Authorize a current local interface before discovery or diagnostics." icon={Network} />
+        <LoadingState label="Checking your session…" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="space-y-6">
+        <PageHeader eyebrow="NetLink foundation" title="Networks & Devices" description="Authorize a current local interface before discovery or diagnostics." icon={Network} />
+        <div className="rounded-xl border border-border bg-card/50 p-6 text-center">
+          <h3 className="text-lg font-semibold">Authentication Required</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            You must be signed in to authorize networks and discover devices.
+          </p>
+          <p className="mt-4">
+            <Link
+              to="/projects/authentication"
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Go to Register / Login
+            </Link>
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (

@@ -72,7 +72,46 @@ async function waitForScanStatus(scanId: string) {
   return scan;
 }
 
-/** Waits until the background scan task has written its final audit row. */
+/** Creates a genuinely closed localhost port by opening a temporary listener,
+ * closing it, and confirming the port is unavailable before scanning. */
+async function createClosedLoopbackPort(): Promise<number> {
+  const server = net.createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Temporary listener did not allocate an IPv4 port.");
+  }
+  const port = address.port;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const isOpen = await new Promise<boolean>((resolve) => {
+      const socket = net.connect({ host: "127.0.0.1", port });
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => resolve(false));
+      socket.setTimeout(150, () => {
+        socket.destroy();
+        resolve(false);
+      });
+    });
+    if (!isOpen) return port;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  throw new Error(`Temporary listener port ${port} remained unexpectedly open.`);
+}
+
 async function waitForAudit(userId: string, action: string) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const count = await prisma.auditLog.count({ where: { userId, action } });
@@ -99,14 +138,16 @@ describe.skipIf(!enabled)("port scanner authorization service", () => {
 
       const openPorts = await Promise.all([listen(listeners), listen(listeners)]);
       const [firstPort, secondPort] = [...openPorts].sort((a, b) => a - b);
-      const closedPort = secondPort + 1;
+      const closedPort = await createClosedLoopbackPort();
+      const startPort = Math.min(firstPort, closedPort);
+      const endPort = Math.max(secondPort, closedPort);
 
       const handle = await startPortScan({
         userId: userA.id,
         ip: "127.0.0.1",
         target: "127.0.0.1",
-        startPort: firstPort,
-        endPort: closedPort,
+        startPort,
+        endPort,
         profile: "custom",
         authorized: true,
       });

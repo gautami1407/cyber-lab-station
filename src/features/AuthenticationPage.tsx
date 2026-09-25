@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Eye, EyeOff, Fingerprint } from "lucide-react";
 import { toast } from "sonner";
 import { AlertBanner } from "@/components/common/AlertBanner";
@@ -25,12 +25,14 @@ function PasswordField({
   value,
   onChange,
   autoComplete,
+  name,
 }: {
   id: string;
   label: string;
   value: string;
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
   autoComplete: string;
+  name?: string;
 }) {
   const [visible, setVisible] = useState(false);
   return (
@@ -39,10 +41,12 @@ function PasswordField({
       <div className="relative">
         <Input
           id={id}
+          name={name}
           type={visible ? "text" : "password"}
-          value={value}
+          defaultValue={value}
           autoComplete={autoComplete}
-          onChange={(event) => onChange(event.target.value)}
+          onInput={(event) => onChange?.(event.currentTarget.value)}
+          onChange={(event) => onChange?.(event.currentTarget.value)}
           className="pr-10"
         />
         <Button
@@ -62,6 +66,7 @@ function PasswordField({
 
 function RegisterTab() {
   const { refresh } = useAuth();
+  const formRef = useRef<HTMLFormElement | null>(null);
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -77,14 +82,27 @@ function RegisterTab() {
     confirm: confirmPassword.length > 0 && confirmPassword !== password ? "Passwords do not match." : null,
   };
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (!username || !email || !password || !confirmPassword) {
+  function getRegistrationValues(form: HTMLFormElement | null = null) {
+    const current = form ? new FormData(form) : null;
+    const nextUsername = String(current?.get("username") ?? username).trim();
+    const nextEmail = String(current?.get("email") ?? email).trim();
+    const nextPassword = String(current?.get("password") ?? password);
+    const nextConfirmPassword = String(current?.get("confirmPassword") ?? confirmPassword);
+    return { username: nextUsername, email: nextEmail, password: nextPassword, confirmPassword: nextConfirmPassword };
+  }
+
+  async function submitRegistration(form: HTMLFormElement | null = null) {
+    const values = getRegistrationValues(form);
+    if (!values.username || !values.email || !values.password || !values.confirmPassword) {
       setState("error");
       setMessage("Complete all fields before submitting.");
       return;
     }
-    if (fieldErrors.username || fieldErrors.email || fieldErrors.confirm) {
+    if (
+      (values.username.length > 0 && values.username.length < 3) ||
+      (values.email.length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(values.email)) ||
+      (values.confirmPassword.length > 0 && values.confirmPassword !== values.password)
+    ) {
       setState("error");
       setMessage("Fix the highlighted fields and try again.");
       return;
@@ -92,7 +110,12 @@ function RegisterTab() {
     setState("loading");
     setMessage(null);
     try {
-      const response = await authService.register({ username, email, password, confirmPassword });
+      const response = await authService.register({
+        username: values.username,
+        email: values.email,
+        password: values.password,
+        confirmPassword: values.confirmPassword,
+      });
       setResult(response);
       setState("success");
       setPassword("");
@@ -105,29 +128,43 @@ function RegisterTab() {
     }
   }
 
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+
+    const handleSubmit = (event: Event) => {
+      event.preventDefault();
+      void submitRegistration(form);
+    };
+
+    form.addEventListener("submit", handleSubmit);
+    return () => form.removeEventListener("submit", handleSubmit);
+  }, [submitRegistration]);
+
   return (
-    <form onSubmit={onSubmit} className="grid gap-6 lg:grid-cols-2">
+    <form ref={formRef} className="grid gap-6 lg:grid-cols-2">
       <div className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="reg-username">Username</Label>
-          <Input id="reg-username" value={username} autoComplete="username" onChange={(e) => setUsername(e.target.value)} />
+          <Input id="reg-username" name="username" value={username} autoComplete="username" onChange={(e) => setUsername(e.target.value)} />
           {fieldErrors.username ? <p className="text-xs text-destructive">{fieldErrors.username}</p> : null}
         </div>
         <div className="space-y-2">
           <Label htmlFor="reg-email">Email</Label>
-          <Input id="reg-email" type="email" value={email} autoComplete="email" onChange={(e) => setEmail(e.target.value)} />
+          <Input id="reg-email" name="email" type="email" value={email} autoComplete="email" onChange={(e) => setEmail(e.target.value)} />
           {fieldErrors.email ? <p className="text-xs text-destructive">{fieldErrors.email}</p> : null}
         </div>
-        <PasswordField id="reg-password" label="Password" value={password} onChange={setPassword} autoComplete="new-password" />
-        <PasswordField
-          id="reg-confirm"
-          label="Confirm Password"
-          value={confirmPassword}
-          onChange={setConfirmPassword}
-          autoComplete="new-password"
-        />
+        <PasswordField id="reg-password" name="password" label="Password" value={password} onChange={setPassword} autoComplete="new-password" />
+        <PasswordField id="reg-confirm" name="confirmPassword" label="Confirm Password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" />
         {fieldErrors.confirm ? <p className="text-xs text-destructive">{fieldErrors.confirm}</p> : null}
-        <Button type="submit" disabled={state === "loading"}>
+        <Button
+          type="submit"
+          onClick={(event) => {
+            const form = (event.currentTarget as HTMLButtonElement).closest("form");
+            void submitRegistration(form);
+          }}
+          disabled={state === "loading"}
+        >
           Create account
         </Button>
       </div>
@@ -147,6 +184,7 @@ function RegisterTab() {
 
 function LoginTab() {
   const { refresh } = useAuth();
+  const formRef = useRef<HTMLFormElement | null>(null);
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
@@ -154,18 +192,27 @@ function LoginTab() {
   const [message, setMessage] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(null);
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
+  function getLoginValues(form: HTMLFormElement | null = null) {
+    const current = form ? new FormData(form) : null;
+    return {
+      identifier: String(current?.get("identifier") ?? identifier).trim(),
+      password: String(current?.get("password") ?? password),
+      rememberMe,
+    };
+  }
+
+  async function submitLogin(form: HTMLFormElement | null = null) {
+    const values = getLoginValues(form);
     setMessage(null);
     setCode(null);
-    if (!identifier || !password) {
+    if (!values.identifier || !values.password) {
       setState("error");
       setMessage("Enter a username/email and password.");
       return;
     }
     setState("loading");
     try {
-      await authService.login({ identifier, password, rememberMe });
+      await authService.login({ identifier: values.identifier, password: values.password, rememberMe: values.rememberMe });
       await refresh();
       setState("success");
       setPassword("");
@@ -177,18 +224,26 @@ function LoginTab() {
     }
   }
 
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+
+    const handleSubmit = (event: Event) => {
+      event.preventDefault();
+      void submitLogin(form);
+    };
+
+    form.addEventListener("submit", handleSubmit);
+    return () => form.removeEventListener("submit", handleSubmit);
+  }, [submitLogin]);
+
   return (
-    <form onSubmit={onSubmit} className="mx-auto max-w-md space-y-4">
+    <form ref={formRef} className="mx-auto max-w-md space-y-4">
       <div className="space-y-2">
         <Label htmlFor="login-id">Username / email</Label>
-        <Input
-          id="login-id"
-          value={identifier}
-          autoComplete="username"
-          onChange={(e) => setIdentifier(e.target.value)}
-        />
+        <Input id="login-id" name="identifier" value={identifier} autoComplete="username" onChange={(e) => setIdentifier(e.target.value)} />
       </div>
-      <PasswordField id="login-password" label="Password" value={password} onChange={setPassword} autoComplete="current-password" />
+      <PasswordField id="login-password" name="password" label="Password" value={password} onChange={setPassword} autoComplete="current-password" />
       <div className="flex items-center gap-2">
         <Checkbox id="remember" checked={rememberMe} onCheckedChange={(v) => setRememberMe(v === true)} />
         <Label htmlFor="remember" className="font-normal">
@@ -198,7 +253,14 @@ function LoginTab() {
       <p className="text-xs text-muted-foreground">
         Credentials are checked against PostgreSQL. Failed attempts are rate limited and can lock the account.
       </p>
-      <Button type="submit" disabled={state === "loading"}>
+      <Button
+        type="submit"
+        onClick={(event) => {
+          const form = (event.currentTarget as HTMLButtonElement).closest("form");
+          void submitLogin(form);
+        }}
+        disabled={state === "loading"}
+      >
         Login
       </Button>
       {state === "loading" ? <LoadingState label="Authenticating…" rows={2} /> : null}

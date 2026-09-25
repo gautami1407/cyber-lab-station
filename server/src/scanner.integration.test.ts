@@ -5,6 +5,28 @@ import { startDeviceServiceScan } from "./services/scanner.js";
 
 const enabled = Boolean(process.env.DATABASE_URL);
 
+async function findClosedPortAfter(openPort: number): Promise<number> {
+  const maxWindow = 64;
+  for (let candidate = openPort + 1; candidate <= openPort + maxWindow; candidate += 1) {
+    const isOpen = await new Promise<boolean>((resolve) => {
+      const socket = net.connect({ host: "127.0.0.1", port: candidate });
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => {
+        resolve(false);
+      });
+      socket.setTimeout(200, () => {
+        socket.destroy();
+        resolve(false);
+      });
+    });
+    if (!isOpen) return candidate;
+  }
+  throw new Error("No closed localhost port could be found in the nearby window after the open port.");
+}
+
 describe.skipIf(!enabled)("device service scan integration", () => {
   it("records open and closed ports for an authorized localhost device", async () => {
     const user = await prisma.user.create({
@@ -25,7 +47,7 @@ describe.skipIf(!enabled)("device service scan integration", () => {
           if (address && typeof address !== "string") resolve(address.port);
         });
       });
-      const closedPort = openPort + 1;
+      const closedPort = await findClosedPortAfter(openPort);
       const network = await prisma.authorizedNetwork.create({
         data: {
           userId: user.id,
